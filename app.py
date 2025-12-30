@@ -1,7 +1,4 @@
 # app.py
-import os
-print(os.listdir("."))
-print(os.listdir("./agenda_igreja"))
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime, timedelta
