@@ -92,9 +92,6 @@ def apply_css():
             margin-right: 6px;
             margin-bottom: 6px;
           }
-          .chip-strong {
-            background: rgba(0,0,0,0.07);
-          }
           .event-card {
             background: #ffffff;
             border: 1px solid rgba(0,0,0,0.06);
@@ -132,6 +129,16 @@ def apply_css():
           }
           .muted { opacity: 0.72; }
           .divider-soft { height: 1px; background: rgba(0,0,0,0.06); margin: 10px 0; }
+          .section-title {
+            font-size: 1.05rem;
+            font-weight: 900;
+            margin: 0;
+          }
+          .section-subtitle {
+            opacity: 0.72;
+            margin: 6px 0 0 0;
+            font-size: 0.92rem;
+          }
         </style>
         """,
         unsafe_allow_html=True
@@ -163,6 +170,11 @@ def init_state():
     st.session_state.setdefault("user", None)
     st.session_state.setdefault("page", "Agenda Pública")
     st.session_state.setdefault("edit_id", None)
+
+    # Controle de campos extras na tela de cadastro
+    st.session_state.setdefault("show_dirigentes_extra", False)
+    st.session_state.setdefault("show_portaria_extra", False)
+    st.session_state.setdefault("show_recepcao_extra", False)
 
 # =========================
 # Utilidades
@@ -331,7 +343,6 @@ def page_agenda_publica():
     df["horario_txt"] = df["horario"].astype(str).str[:5]
     df = df.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
 
-    # Separação por tipo
     tab_culto, tab_ebd, tab_oracao, tab_ensaio = st.tabs(["Cultos", "EBD", "Oração", "Ensaios"])
 
     def render_group(tipo_nome: str, container):
@@ -375,7 +386,6 @@ def page_agenda_publica():
                     )
                 return
 
-            # Cards
             for _, r in sub.iterrows():
                 _event_card(r.to_dict())
 
@@ -395,6 +405,17 @@ def page_cadastrar_evento():
 
     def val(key, default=""):
         return ev.get(key) if ev and ev.get(key) is not None else default
+
+    st.markdown(
+        """
+        <div class="soft-card">
+          <p class="section-title">Dados do Evento</p>
+          <p class="section-subtitle">Preencha as informações básicas do culto, ensaio, oração ou EBD.</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    st.markdown("")
 
     col1, col2, col3 = st.columns(3)
 
@@ -433,39 +454,75 @@ def page_cadastrar_evento():
     with col4:
         data_evento = st.date_input("Data", value=val("data", date.today()), format="DD/MM/YYYY")
     with col5:
+        # 1) Horário padrão 19:00
+        horario_default = datetime.strptime("19:00", "%H:%M").time()
         horario = st.time_input(
             "Horário",
-            value=val("horario", datetime.now().time().replace(second=0, microsecond=0))
+            value=val("horario", horario_default)
         )
 
-    st.markdown("### Equipe")
+    st.markdown(
+        """
+        <div class="soft-card" style="margin-top:14px;">
+          <p class="section-title">Equipe do Evento</p>
+          <p class="section-subtitle">Campos 2 e 3 ficam ocultos. Clique no botão de adicionar se precisar.</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    st.markdown("")
 
+    # 2) Dirigentes 2 e 3 ocultos com ícone de mais
+    st.markdown("### Dirigência")
     dirigente1 = st.text_input("Dirigente", value=val("dirigente1"))
-    col_d1, col_d2 = st.columns(2)
-    with col_d1:
-        dirigente2 = st.text_input("Dirigente 2", value=val("dirigente2"))
-    with col_d2:
-        dirigente3 = st.text_input("Dirigente 3", value=val("dirigente3"))
+    st.toggle("➕ Adicionar mais dirigentes", key="show_dirigentes_extra")
 
-    st.divider()
+    if st.session_state.show_dirigentes_extra:
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            dirigente2 = st.text_input("Dirigente 2", value=val("dirigente2"))
+        with col_d2:
+            dirigente3 = st.text_input("Dirigente 3", value=val("dirigente3"))
+    else:
+        dirigente2 = val("dirigente2")
+        dirigente3 = val("dirigente3")
 
+    st.markdown("<div class='divider-soft'></div>", unsafe_allow_html=True)
+
+    # 2) Portaria 2 e 3 ocultos com ícone de mais
+    st.markdown("### Portaria")
     portaria1 = st.text_input("Portaria", value=val("portaria1"))
-    col_p1, col_p2 = st.columns(2)
-    with col_p1:
-        portaria2 = st.text_input("Portaria 2", value=val("portaria2"))
-    with col_p2:
-        portaria3 = st.text_input("Portaria 3", value=val("portaria3"))
+    st.toggle("➕ Adicionar mais na portaria", key="show_portaria_extra")
 
-    st.divider()
+    if st.session_state.show_portaria_extra:
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            portaria2 = st.text_input("Portaria 2", value=val("portaria2"))
+        with col_p2:
+            portaria3 = st.text_input("Portaria 3", value=val("portaria3"))
+    else:
+        portaria2 = val("portaria2")
+        portaria3 = val("portaria3")
 
+    st.markdown("<div class='divider-soft'></div>", unsafe_allow_html=True)
+
+    # 2) Recepção 2 e 3 ocultos com ícone de mais
+    st.markdown("### Recepção")
     recepcao1 = st.text_input("Recepção", value=val("recepcao1"))
-    col_r1, col_r2 = st.columns(2)
-    with col_r1:
-        recepcao2 = st.text_input("Recepção 2", value=val("recepcao2"))
-    with col_r2:
-        recepcao3 = st.text_input("Recepção 3", value=val("recepcao3"))
+    st.toggle("➕ Adicionar mais na recepção", key="show_recepcao_extra")
 
-    st.divider()
+    if st.session_state.show_recepcao_extra:
+        col_r1, col_r2 = st.columns(2)
+        with col_r1:
+            recepcao2 = st.text_input("Recepção 2", value=val("recepcao2"))
+        with col_r2:
+            recepcao3 = st.text_input("Recepção 3", value=val("recepcao3"))
+    else:
+        recepcao2 = val("recepcao2")
+        recepcao3 = val("recepcao3")
+
+    st.markdown("<div class='divider-soft'></div>", unsafe_allow_html=True)
+
     secretaria = st.text_input("Secretaria", value=val("secretaria"))
     observacoes = st.text_area("Observações", value=val("observacoes"), height=90)
 
@@ -489,14 +546,14 @@ def page_cadastrar_evento():
             "data": data_evento,
             "horario": horario,
             "dirigente1": dirigente1 or None,
-            "dirigente2": dirigente2 or None,
-            "dirigente3": dirigente3 or None,
+            "dirigente2": (dirigente2 or None) if st.session_state.show_dirigentes_extra else (dirigente2 or None),
+            "dirigente3": (dirigente3 or None) if st.session_state.show_dirigentes_extra else (dirigente3 or None),
             "portaria1": portaria1 or None,
-            "portaria2": portaria2 or None,
-            "portaria3": portaria3 or None,
+            "portaria2": (portaria2 or None) if st.session_state.show_portaria_extra else (portaria2 or None),
+            "portaria3": (portaria3 or None) if st.session_state.show_portaria_extra else (portaria3 or None),
             "recepcao1": recepcao1 or None,
-            "recepcao2": recepcao2 or None,
-            "recepcao3": recepcao3 or None,
+            "recepcao2": (recepcao2 or None) if st.session_state.show_recepcao_extra else (recepcao2 or None),
+            "recepcao3": (recepcao3 or None) if st.session_state.show_recepcao_extra else (recepcao3 or None),
             "secretaria": secretaria or None,
             "observacoes": observacoes or None,
         }
@@ -513,7 +570,7 @@ def page_cadastrar_evento():
         st.rerun()
 
 # =========================
-# Agenda da Semana (Admin visual padrão + export PNG)
+# Agenda da Semana (Admin)
 # =========================
 def page_agenda_semana():
     st.markdown("## Agenda da Semana")
@@ -627,17 +684,14 @@ def main():
 
     page = st.session_state.page
 
-    # público
     if page == "Agenda Pública":
         page_agenda_publica()
         return
 
-    # login
     if page == "Login":
         page_login()
         return
 
-    # admin
     if not st.session_state.auth_ok:
         st.warning("Você precisa estar logado para acessar esta área.")
         page_login()
