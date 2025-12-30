@@ -15,7 +15,6 @@ def get_db_config() -> dict:
             "sslmode": os.getenv("PGSSLMODE", "require"),
         }
 
-    # fallback pras variáveis separadas
     return {
         "host": os.getenv("PGHOST"),
         "database": os.getenv("PGDATABASE"),
