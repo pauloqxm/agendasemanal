@@ -3,7 +3,7 @@ import psycopg2
 from contextlib import contextmanager
 from .config import get_db_config
 
-SCHEMA = "db_agenda"  # se o nome correto for bd_agenda, troca aqui
+SCHEMA = "bd_agenda"
 
 @contextmanager
 def get_db_connection():
