@@ -14,7 +14,9 @@ CONGREGACOES = [
 TIPOS = ["Culto", "Oração", "Ensaio", "EBD"]
 
 SUBTIPOS_CULTO = [
+    "Doutrina",
     "Santa Ceia",
+    "Oficial",
     "Missões",
     "Jovens",
     "Família",
