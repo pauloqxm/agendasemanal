@@ -1,9 +1,9 @@
+# agenda_igreja/db.py
 import psycopg2
-from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
 from .config import get_db_config
 
-SCHEMA = "bd_agenda"
+SCHEMA = "db_agenda"  # se o nome correto for bd_agenda, troca aqui
 
 @contextmanager
 def get_db_connection():
@@ -21,7 +21,7 @@ def get_db_connection():
         )
         conn.autocommit = False
 
-        # garante schema e search_path
+        # garante o schema e seta o contexto pra ele
         with conn.cursor() as cur:
             cur.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA};")
             cur.execute(f"SET search_path TO {SCHEMA}, public;")
@@ -36,8 +36,10 @@ def test_db_connection():
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT version();")
-                v = cur.fetchone()
-                return True, f"✅ Conectado ao PostgreSQL: {v[0]}"
+                cur.execute("SHOW search_path;")
+                sp = cur.fetchone()[0]
+                cur.execute("SELECT current_database(), current_user;")
+                dbu = cur.fetchone()
+                return True, f"✅ OK. DB={dbu[0]} USER={dbu[1]} search_path={sp}"
     except Exception as e:
-        return False, f"❌ Falha na conexão: {str(e)}"
+        return False, f"❌ Falha: {e}"
