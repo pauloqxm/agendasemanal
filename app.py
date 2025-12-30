@@ -1,7 +1,7 @@
 # app.py
 import streamlit as st
 import pandas as pd
-from datetime import date, datetime, timedelta, time as dtime
+from datetime import date, datetime, timedelta
 
 from agenda_igreja.db import test_db_connection
 from agenda_igreja.auth import (
@@ -11,7 +11,8 @@ from agenda_igreja.auth import (
     create_user,
     list_users,
     set_user_active,
-    reset_password
+    reset_password,
+    ROLES
 )
 from agenda_igreja.events import (
     init_events,
@@ -50,7 +51,7 @@ def apply_css():
     st.markdown(
         """
         <style>
-          .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1200px; }
+          .block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
           [data-testid="stSidebar"] { border-right: 1px solid rgba(0,0,0,0.06); }
           .soft-card {
             background: #ffffff;
@@ -60,7 +61,7 @@ def apply_css():
             box-shadow: 0 10px 30px rgba(0,0,0,0.06);
           }
           .topbar {
-            background: linear-gradient(135deg, rgba(0,0,0,0.05), rgba(0,0,0,0.00));
+            background: linear-gradient(135deg, rgba(0,0,0,0.04), rgba(0,0,0,0.00));
             border: 1px solid rgba(0,0,0,0.06);
             border-radius: 20px;
             padding: 14px 16px;
@@ -80,7 +81,7 @@ def apply_css():
           }
           .church-title {
             font-size: 1.05rem;
-            font-weight: 900;
+            font-weight: 800;
             margin: 0;
             line-height: 1.2;
           }
@@ -96,7 +97,7 @@ def apply_css():
             border: 1px solid rgba(0,0,0,0.10);
             background: rgba(0,0,0,0.03);
             font-size: 0.78rem;
-            font-weight: 800;
+            font-weight: 700;
             margin-right: 6px;
             margin-bottom: 6px;
           }
@@ -120,7 +121,7 @@ def apply_css():
             font-size: 0.95rem;
           }
           .event-where {
-            font-weight: 900;
+            font-weight: 800;
             opacity: 0.8;
             font-size: 0.9rem;
             text-align: right;
@@ -146,10 +147,6 @@ def apply_css():
             opacity: 0.72;
             margin: 6px 0 0 0;
             font-size: 0.92rem;
-          }
-          .small-note {
-            font-size: 0.85rem;
-            opacity: 0.75;
           }
         </style>
         """,
@@ -188,33 +185,6 @@ def init_state():
     st.session_state.setdefault("show_recepcao_extra", False)
 
 # =========================
-# Helpers de permissão
-# =========================
-def current_user():
-    return st.session_state.get("user") or {}
-
-def user_role():
-    return (current_user().get("perfil") or "").upper()
-
-def user_congregacao_vinculada():
-    return current_user().get("congregacao_vinculada")
-
-def can_manage_events() -> bool:
-    return st.session_state.get("auth_ok") and has_role("ADMIN", "PASTOR", "DIRIGENTE", "SECRETARIO")
-
-def can_manage_users() -> bool:
-    return st.session_state.get("auth_ok") and has_role("ADMIN")
-
-def enforce_secretario_congregacao(selected_congregacao: str | None) -> bool:
-    """
-    Retorna True se permitido. Secretário só mexe na congregação vinculada.
-    """
-    if user_role() != "SECRETARIO":
-        return True
-    vinc = user_congregacao_vinculada()
-    return bool(vinc) and (selected_congregacao == vinc)
-
-# =========================
 # Utilidades
 # =========================
 def week_bounds(ref: date):
@@ -237,8 +207,7 @@ def join_people(*args):
 def _chips(items):
     if not items:
         return ""
-    safe = [x for x in items if x]
-    return "".join([f"<span class='chip'>{x}</span>" for x in safe])
+    return "".join([f"<span class='chip'>{x}</span>" for x in items if x])
 
 def _event_card(ev: dict):
     data_txt = _fmt_date_br(pd.to_datetime(ev["data"]).date() if ev.get("data") else date.today())
@@ -294,15 +263,14 @@ def sidebar():
         st.divider()
 
         if st.session_state.auth_ok:
-            user = current_user()
+            user = st.session_state.user or {}
             st.markdown(f"**Usuário:** {user.get('nome') or user.get('username')}")
-            st.caption(f"Perfil: **{user_role() or '—'}**")
-
-            if user_role() == "SECRETARIO":
-                st.caption(f"Congregação vinculada: **{user_congregacao_vinculada() or '—'}**")
+            st.caption(f"Perfil: **{user.get('perfil')}**")
 
             pages = ["Agenda Pública", "Agenda da Semana", "Cadastrar Evento", "Gerenciar Eventos"]
-            if can_manage_users():
+
+            # só ADMIN vê Usuários
+            if has_role("ADMIN"):
                 pages.append("Usuários")
 
             st.session_state.page = st.radio(
@@ -327,7 +295,7 @@ def sidebar():
             )
 
         st.divider()
-        st.caption("Agenda da Igreja • versão inicial")
+        st.caption("Versão inicial da Agenda")
 
 # =========================
 # Login
@@ -337,8 +305,8 @@ def page_login():
     st.write("Acesso restrito para cadastro e gerenciamento da agenda.")
 
     with st.form("login_form"):
-        username = st.text_input("👤 Usuário*", placeholder="Digite seu usuário")
-        password = st.text_input("🔒 Senha*", type="password", placeholder="Digite sua senha")
+        username = st.text_input("Usuário", placeholder="Seu usuário")
+        password = st.text_input("Senha", type="password", placeholder="Sua senha")
         submit = st.form_submit_button("Entrar", use_container_width=True)
 
     if submit:
@@ -350,7 +318,7 @@ def page_login():
             st.success("Login realizado com sucesso.")
             st.rerun()
         else:
-            st.error("Usuário ou senha inválidos, ou conta inativa.")
+            st.error("Usuário ou senha inválidos.")
 
 # =========================
 # Agenda Pública (só leitura)
@@ -361,17 +329,13 @@ def page_agenda_publica():
 
     colA, colB, colC = st.columns([1.1, 1.0, 0.9])
     with colA:
-        ref = st.date_input("📅 Semana de referência", value=date.today(), format="DD/MM/YYYY")
+        ref = st.date_input("Semana de referência", value=date.today(), format="DD/MM/YYYY")
     monday, sunday = week_bounds(ref)
 
     with colB:
-        congregacao = st.selectbox(
-            "🏛️ Congregação",
-            ["Todas"] + CONGREGACOES,
-            index=0,
-        )
+        congregacao = st.selectbox("Congregação", ["Todas"] + CONGREGACOES)
     with colC:
-        modo = st.selectbox("👀 Exibição", ["Cards", "Tabela"], index=0)
+        modo = st.selectbox("Exibição", ["Cards", "Tabela"], index=0)
 
     eventos = list_events_between(
         monday,
@@ -430,7 +394,7 @@ def page_agenda_publica():
                 )
                 if png:
                     st.download_button(
-                        "📸 Exportar esta aba em PNG",
+                        "Exportar esta aba em PNG",
                         data=png,
                         file_name=f"agenda_{tipo_nome.lower()}_{monday.strftime('%Y%m%d')}.png",
                         mime="image/png",
@@ -447,14 +411,10 @@ def page_agenda_publica():
     render_group("Ensaio", tab_ensaio)
 
 # =========================
-# Cadastro de Evento (Admin)
+# Cadastro de Evento (Admin/Privado)
 # =========================
 def page_cadastrar_evento():
     st.markdown("## Cadastro de Evento")
-
-    if not can_manage_events():
-        st.error("Você não tem permissão para cadastrar/editar eventos.")
-        return
 
     edit_id = st.session_state.edit_id
     ev = get_event(edit_id) if edit_id else None
@@ -465,7 +425,6 @@ def page_cadastrar_evento():
         v = ev.get(key)
         return v if v is not None else default
 
-    # Card topo
     st.markdown(
         """
         <div class="soft-card">
@@ -477,41 +436,33 @@ def page_cadastrar_evento():
     )
     st.markdown("")
 
-    # Se Secretário: congregação travada e validada
-    secretario_vinc = user_congregacao_vinculada() if user_role() == "SECRETARIO" else None
-    if user_role() == "SECRETARIO" and not secretario_vinc:
-        st.error("Seu perfil é SECRETARIO, mas você não tem congregação vinculada. Peça ao ADMIN para ajustar.")
-        return
-
     col1, col2, col3 = st.columns(3)
 
-    # Congregação
+    # Congregação (SECRETARIO só pode alterar a vinculada)
+    user = st.session_state.user or {}
+    perfil = user.get("perfil")
+    vinc = user.get("congregacao_vinculada")
+
+    allowed_congregs = CONGREGACOES
+    if perfil == "SECRETARIO" and vinc:
+        allowed_congregs = [vinc]
+
     with col1:
-        if user_role() == "SECRETARIO":
-            # travado
+        if ev and val("congregacao") in allowed_congregs:
             congregacao = st.selectbox(
                 "🏛️ Congregação*",
-                [secretario_vinc],
-                index=0,
-                disabled=True
+                allowed_congregs,
+                index=allowed_congregs.index(val("congregacao")),
+                placeholder="Selecione a congregação"
             )
         else:
-            if ev and val("congregacao") in CONGREGACOES:
-                congregacao = st.selectbox(
-                    "🏛️ Congregação*",
-                    CONGREGACOES,
-                    index=CONGREGACOES.index(val("congregacao")),
-                    placeholder="Selecione a congregação"
-                )
-            else:
-                congregacao = st.selectbox(
-                    "🏛️ Congregação*",
-                    CONGREGACOES,
-                    index=None,
-                    placeholder="Selecione a congregação"
-                )
+            congregacao = st.selectbox(
+                "🏛️ Congregação*",
+                allowed_congregs,
+                index=None,
+                placeholder="Selecione a congregação"
+            )
 
-    # Tipo
     with col2:
         if ev and val("tipo") in TIPOS:
             tipo = st.selectbox(
@@ -528,68 +479,59 @@ def page_cadastrar_evento():
                 placeholder="Escolha o tipo do evento"
             )
 
-    # Subtipo/Turma (dinâmico)
     with col3:
         subtipo = None
         turma_ebd = None
 
-        tipo_eff = tipo or val("tipo")
+        if (tipo == "Culto") or (ev and val("tipo") == "Culto" and tipo is None):
+            tipo_eff = tipo or val("tipo")
+            if tipo_eff == "Culto":
+                options = SUBTIPOS_CULTO
+                current = val("subtipo")
+                if ev and current in options:
+                    subtipo = st.selectbox(
+                        "✨ Subtipo do Culto",
+                        options,
+                        index=options.index(current),
+                        placeholder="Selecione (opcional)"
+                    )
+                else:
+                    subtipo = st.selectbox(
+                        "✨ Subtipo do Culto",
+                        options,
+                        index=None,
+                        placeholder="Selecione (opcional)"
+                    )
 
-        if tipo_eff == "Culto":
-            options = SUBTIPOS_CULTO
-            current = val("subtipo")
-            if ev and current in options:
-                subtipo = st.selectbox(
-                    "✨ Subtipo do Culto",
-                    options,
-                    index=options.index(current),
-                    placeholder="Selecione (opcional)"
-                )
-            else:
-                subtipo = st.selectbox(
-                    "✨ Subtipo do Culto",
-                    options,
-                    index=None,
-                    placeholder="Selecione (opcional)"
-                )
-
-        if tipo_eff == "EBD":
-            options = TURMAS_EBD
-            current = val("turma_ebd")
-            if ev and current in options:
-                turma_ebd = st.selectbox(
-                    "📚 Turma da EBD*",
-                    options,
-                    index=options.index(current),
-                    placeholder="Selecione a turma"
-                )
-            else:
-                turma_ebd = st.selectbox(
-                    "📚 Turma da EBD*",
-                    options,
-                    index=None,
-                    placeholder="Selecione a turma"
-                )
+        if (tipo == "EBD") or (ev and val("tipo") == "EBD" and tipo is None):
+            tipo_eff = tipo or val("tipo")
+            if tipo_eff == "EBD":
+                options = TURMAS_EBD
+                current = val("turma_ebd")
+                if ev and current in options:
+                    turma_ebd = st.selectbox(
+                        "📚 Turma da EBD*",
+                        options,
+                        index=options.index(current),
+                        placeholder="Selecione a turma"
+                    )
+                else:
+                    turma_ebd = st.selectbox(
+                        "📚 Turma da EBD*",
+                        options,
+                        index=None,
+                        placeholder="Selecione a turma"
+                    )
 
     col4, col5 = st.columns(2)
 
-    # Data
     with col4:
-        data_evento = st.date_input(
-            "📅 Data*",
-            value=val("data", date.today()),
-            format="DD/MM/YYYY"
-        )
+        data_evento = st.date_input("📅 Data*", value=val("data", date.today()), format="DD/MM/YYYY")
 
-    # Horário (default 19:00)
     with col5:
-        horario_default = dtime(hour=19, minute=0)
-        horario = st.time_input(
-            "🕖 Horário*",
-            value=val("horario", horario_default)
-        )
+        horario_default = datetime.strptime("19:00", "%H:%M").time()
+        horario = st.time_input("🕖 Horário*", value=val("horario", horario_default))
 
-    # Separação bonita entre evento e equipe
     st.markdown(
         """
         <div class="soft-card" style="margin-top:14px;">
@@ -601,13 +543,8 @@ def page_cadastrar_evento():
     )
     st.markdown("")
 
-    # Dirigência
     st.markdown("### 👤 Dirigência")
-    dirigente1 = st.text_input(
-        "👤 Dirigente*",
-        value=val("dirigente1", "") or "",
-        placeholder="Nome do dirigente responsável"
-    )
+    dirigente1 = st.text_input("👤 Dirigente", value=val("dirigente1", "") or "", placeholder="Nome do dirigente responsável")
 
     st.toggle("➕ Adicionar mais dirigentes", key="show_dirigentes_extra")
     if st.session_state.show_dirigentes_extra:
@@ -622,13 +559,8 @@ def page_cadastrar_evento():
 
     st.markdown("<div class='divider-soft'></div>", unsafe_allow_html=True)
 
-    # Portaria
     st.markdown("### 🚪 Portaria")
-    portaria1 = st.text_input(
-        "🚪 Portaria*",
-        value=val("portaria1", "") or "",
-        placeholder="Nome do responsável pela portaria"
-    )
+    portaria1 = st.text_input("🚪 Portaria", value=val("portaria1", "") or "", placeholder="Nome do responsável pela portaria")
 
     st.toggle("➕ Adicionar mais na portaria", key="show_portaria_extra")
     if st.session_state.show_portaria_extra:
@@ -643,13 +575,8 @@ def page_cadastrar_evento():
 
     st.markdown("<div class='divider-soft'></div>", unsafe_allow_html=True)
 
-    # Recepção
     st.markdown("### 🤝 Recepção")
-    recepcao1 = st.text_input(
-        "🤝 Recepção*",
-        value=val("recepcao1", "") or "",
-        placeholder="Nome do responsável pela recepção"
-    )
+    recepcao1 = st.text_input("🤝 Recepção", value=val("recepcao1", "") or "", placeholder="Nome do responsável pela recepção")
 
     st.toggle("➕ Adicionar mais na recepção", key="show_recepcao_extra")
     if st.session_state.show_recepcao_extra:
@@ -664,24 +591,8 @@ def page_cadastrar_evento():
 
     st.markdown("<div class='divider-soft'></div>", unsafe_allow_html=True)
 
-    secretaria = st.text_input(
-        "🗂️ Secretaria",
-        value=val("secretaria", "") or "",
-        placeholder="Nome do responsável pela secretaria (opcional)"
-    )
-    observacoes = st.text_area(
-        "📝 Observações",
-        value=val("observacoes", "") or "",
-        placeholder="Escreva observações importantes (opcional)",
-        height=90
-    )
-
-    # trava de permissão do secretário no salvar/editar
-    if user_role() == "SECRETARIO":
-        if not enforce_secretario_congregacao(congregacao):
-            st.error("Secretário(a) só pode operar a congregação vinculada.")
-            return
-        st.caption("🔒 Seu perfil é SECRETARIO. A congregação fica vinculada e não pode ser alterada.")
+    secretaria = st.text_input("🗂️ Secretaria", value=val("secretaria", "") or "", placeholder="Nome do responsável (opcional)")
+    observacoes = st.text_area("📝 Observações", value=val("observacoes", "") or "", placeholder="Observações (opcional)", height=90)
 
     col_s1, col_s2 = st.columns(2)
     with col_s1:
@@ -695,33 +606,21 @@ def page_cadastrar_evento():
         st.rerun()
 
     if salvar:
-        # validações
         if not congregacao:
             st.error("Selecione a Congregação.")
             return
         if not tipo:
             st.error("Selecione o Tipo da agenda.")
             return
-        if tipo_eff == "EBD" and not turma_ebd:
+        if tipo == "EBD" and not turma_ebd:
             st.error("Para EBD, selecione a Turma.")
-            return
-        if not data_evento:
-            st.error("Selecione a Data.")
-            return
-        if not horario:
-            st.error("Selecione o Horário.")
-            return
-
-        # Secretário: valida de novo
-        if user_role() == "SECRETARIO" and not enforce_secretario_congregacao(congregacao):
-            st.error("Secretário(a) só pode cadastrar/editar eventos da congregação vinculada.")
             return
 
         payload = {
             "congregacao": congregacao,
-            "tipo": tipo_eff,
-            "subtipo": (subtipo or None) if tipo_eff == "Culto" else None,
-            "turma_ebd": (turma_ebd or None) if tipo_eff == "EBD" else None,
+            "tipo": tipo,
+            "subtipo": (subtipo or None) if tipo == "Culto" else None,
+            "turma_ebd": (turma_ebd or None) if tipo == "EBD" else None,
             "data": data_evento,
             "horario": horario,
             "dirigente1": (dirigente1 or "").strip() or None,
@@ -737,13 +636,6 @@ def page_cadastrar_evento():
             "observacoes": (observacoes or "").strip() or None,
         }
 
-        # Se editando, Secretário só pode editar se evento for da congregação dele
-        if edit_id and user_role() == "SECRETARIO":
-            ev_db = get_event(edit_id)
-            if ev_db and ev_db.get("congregacao") != secretario_vinc:
-                st.error("Você não pode editar evento de outra congregação.")
-                return
-
         if edit_id:
             update_event(edit_id, payload)
             st.success("Evento atualizado.")
@@ -756,33 +648,20 @@ def page_cadastrar_evento():
         st.rerun()
 
 # =========================
-# Agenda da Semana (Admin)
+# Agenda da Semana (Privado)
 # =========================
 def page_agenda_semana():
     st.markdown("## Agenda da Semana")
 
-    if not can_manage_events():
-        st.info("Apenas usuários logados podem acessar esta área.")
-        return
-
     col1, col2, col3 = st.columns(3)
     with col1:
-        ref = st.date_input("📅 Semana de referência", value=date.today(), format="DD/MM/YYYY")
+        ref = st.date_input("Semana de referência", value=date.today(), format="DD/MM/YYYY")
     monday, sunday = week_bounds(ref)
 
-    # Secretário: força congregação vinculada
-    if user_role() == "SECRETARIO":
-        congregacao = user_congregacao_vinculada()
-        col2, col3 = st.columns(2)
-        with col2:
-            st.selectbox("🏛️ Congregação", [congregacao], index=0, disabled=True)
-        with col3:
-            tipo = st.selectbox("📌 Tipo", ["Todos"] + TIPOS, index=0)
-    else:
-        with col2:
-            congregacao = st.selectbox("🏛️ Congregação", ["Todas"] + CONGREGACOES, index=0)
-        with col3:
-            tipo = st.selectbox("📌 Tipo", ["Todos"] + TIPOS, index=0)
+    with col2:
+        congregacao = st.selectbox("Congregação", ["Todas"] + CONGREGACOES)
+    with col3:
+        tipo = st.selectbox("Tipo", ["Todos"] + TIPOS)
 
     eventos = list_events_between(
         monday,
@@ -804,23 +683,16 @@ def page_agenda_semana():
     df["Portaria"] = df.apply(lambda r: join_people(r.portaria1, r.portaria2, r.portaria3), axis=1)
     df["Recepção"] = df.apply(lambda r: join_people(r.recepcao1, r.recepcao2, r.recepcao3), axis=1)
 
-    view = df[[
-        "Data", "Horário", "congregacao", "Tipo",
-        "Dirigente", "Portaria", "Recepção", "secretaria"
-    ]].rename(columns={
-        "congregacao": "Congregação",
-        "secretaria": "Secretaria"
-    })
+    view = df[["Data", "Horário", "congregacao", "Tipo", "Dirigente", "Portaria", "Recepção", "secretaria"]].rename(
+        columns={"congregacao": "Congregação", "secretaria": "Secretaria"}
+    )
 
     st.dataframe(view, use_container_width=True, hide_index=True)
 
-    png = df_to_png_bytes(
-        view,
-        title=f"Agenda {_fmt_date_br(monday)} a {_fmt_date_br(sunday)}"
-    )
+    png = df_to_png_bytes(view, title=f"Agenda {_fmt_date_br(monday)} a {_fmt_date_br(sunday)}")
     if png:
         st.download_button(
-            "📸 Exportar agenda em PNG",
+            "Exportar agenda em PNG",
             data=png,
             file_name="agenda_semana.png",
             mime="image/png",
@@ -828,32 +700,18 @@ def page_agenda_semana():
         )
 
 # =========================
-# Gerenciar Eventos (Admin)
+# Gerenciar Eventos (Privado)
 # =========================
 def page_gerenciar_eventos():
     st.markdown("## Gerenciar Eventos")
 
-    if not can_manage_events():
-        st.error("Você não tem permissão para gerenciar eventos.")
-        return
-
-    col1, col2, col3 = st.columns([1, 1, 1])
+    col1, col2 = st.columns(2)
     with col1:
-        dt_ini = st.date_input("📅 Data inicial", value=date.today() - timedelta(days=30), format="DD/MM/YYYY")
+        dt_ini = st.date_input("Data inicial", value=date.today() - timedelta(days=30), format="DD/MM/YYYY")
     with col2:
-        dt_fim = st.date_input("📅 Data final", value=date.today() + timedelta(days=60), format="DD/MM/YYYY")
+        dt_fim = st.date_input("Data final", value=date.today() + timedelta(days=60), format="DD/MM/YYYY")
 
-    # Secretário: restringe por congregação vinculada
-    if user_role() == "SECRETARIO":
-        cong = user_congregacao_vinculada()
-        with col3:
-            st.selectbox("🏛️ Congregação", [cong], index=0, disabled=True)
-        eventos = list_events_between(dt_ini, dt_fim, congregacao=cong, tipo=None)
-    else:
-        with col3:
-            cong = st.selectbox("🏛️ Congregação", ["Todas"] + CONGREGACOES, index=0)
-        eventos = list_events_between(dt_ini, dt_fim, congregacao=None if cong == "Todas" else cong, tipo=None)
-
+    eventos = list_events_between(dt_ini, dt_fim)
     if not eventos:
         st.info("Nenhum evento encontrado.")
         return
@@ -869,29 +727,16 @@ def page_gerenciar_eventos():
         hide_index=True
     )
 
-    selected = st.selectbox("🧾 Selecione o ID do evento", df["id"].tolist())
-
-    # Secretário: valida evento
-    if user_role() == "SECRETARIO":
-        ev = get_event(selected)
-        if ev and ev.get("congregacao") != user_congregacao_vinculada():
-            st.error("Esse evento não pertence à sua congregação. Você não pode mexer.")
-            return
+    selected = st.selectbox("Selecione o ID do evento", df["id"].tolist())
 
     colA, colB = st.columns(2)
     with colA:
-        if st.button("✏️ Editar", use_container_width=True):
+        if st.button("Editar", use_container_width=True):
             st.session_state.edit_id = selected
             st.session_state.page = "Cadastrar Evento"
             st.rerun()
     with colB:
-        if st.button("🗑️ Excluir", use_container_width=True):
-            # Secretário: trava
-            if user_role() == "SECRETARIO":
-                ev = get_event(selected)
-                if ev and ev.get("congregacao") != user_congregacao_vinculada():
-                    st.error("Você não pode excluir evento de outra congregação.")
-                    return
+        if st.button("Excluir", use_container_width=True):
             delete_event(selected)
             st.success("Evento excluído.")
             st.rerun()
@@ -901,107 +746,115 @@ def page_gerenciar_eventos():
 # =========================
 def page_usuarios():
     st.markdown("## Usuários")
+    st.caption("Apenas administrador consegue cadastrar e gerenciar usuários.")
 
-    if not can_manage_users():
-        st.error("Apenas ADMIN pode gerenciar usuários.")
+    if not has_role("ADMIN"):
+        st.error("Acesso negado. Esta área é somente para ADMIN.")
         return
 
-    st.markdown(
-        """
-        <div class="soft-card">
-          <p class="section-title">Gestão de Usuários</p>
-          <p class="section-subtitle">Crie usuários, ative/desative e redefina senhas. Troque a senha do admin padrão.</p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    st.markdown("")
-
-    tab1, tab2, tab3 = st.tabs(["➕ Criar usuário", "📋 Lista", "🔑 Reset senha"])
+    tab1, tab2 = st.tabs(["Cadastrar usuário", "Gerenciar usuários"])
 
     with tab1:
-        with st.form("form_create_user"):
+        st.markdown(
+            """
+            <div class="soft-card">
+              <p class="section-title">Novo Usuário</p>
+              <p class="section-subtitle">Crie um novo acesso. Para SECRETARIO, escolha a congregação vinculada.</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        st.markdown("")
+
+        col1, col2 = st.columns(2)
+        with col1:
             nome = st.text_input("👤 Nome*", placeholder="Nome completo")
-            username = st.text_input("🆔 Username*", placeholder="Ex: joao.silva")
-            senha = st.text_input("🔒 Senha*", type="password", placeholder="Defina uma senha")
+        with col2:
+            username = st.text_input("🆔 Usuário*", placeholder="Ex: joao.silva")
+
+        col3, col4 = st.columns(2)
+        with col3:
+            senha = st.text_input("🔑 Senha*", type="password", placeholder="Defina uma senha")
+        with col4:
             perfil = st.selectbox(
-                "🎭 Perfil*",
-                ["ADMIN", "PASTOR", "DIRIGENTE", "SECRETARIO"],
+                "🎚️ Perfil*",
+                ROLES,
                 index=None,
-                placeholder="Escolha um perfil"
+                placeholder="Escolha o perfil"
             )
 
-            congreg_vinc = None
-            if perfil == "SECRETARIO":
-                congreg_vinc = st.selectbox(
-                    "🏛️ Congregação vinculada*",
-                    CONGREGACOES,
-                    index=None,
-                    placeholder="Escolha a congregação do secretário(a)"
-                )
+        congreg_vinc = None
+        if perfil == "SECRETARIO":
+            congreg_vinc = st.selectbox(
+                "🏛️ Congregação vinculada*",
+                CONGREGACOES,
+                index=None,
+                placeholder="Secretário só mexe nesta congregação"
+            )
 
-            submit = st.form_submit_button("Criar", use_container_width=True)
-
-        if submit:
+        if st.button("✅ Criar usuário", type="primary", use_container_width=True):
+            if not nome.strip():
+                st.error("Informe o nome.")
+                return
+            if not username.strip():
+                st.error("Informe o usuário.")
+                return
+            if not senha:
+                st.error("Informe a senha.")
+                return
+            if not perfil:
+                st.error("Selecione o perfil.")
+                return
             try:
-                if not nome or not username or not senha or not perfil:
-                    st.error("Preencha Nome, Username, Senha e Perfil.")
-                else:
-                    create_user(nome, username, senha, perfil, congreg_vinc)
-                    st.success("Usuário criado.")
-                    st.rerun()
+                create_user(nome, username, senha, perfil, congreg_vinc)
+                st.success("Usuário criado.")
+                st.rerun()
             except Exception as e:
                 st.error(f"Erro ao criar usuário: {e}")
 
     with tab2:
         users = list_users()
         if not users:
-            st.info("Nenhum usuário encontrado.")
-        else:
-            dfu = pd.DataFrame(users)
-            if "criado_em" in dfu.columns:
-                dfu["criado_em"] = pd.to_datetime(dfu["criado_em"]).dt.strftime("%d/%m/%Y %H:%M")
-            st.dataframe(dfu, use_container_width=True, hide_index=True)
+            st.info("Ainda não há usuários cadastrados.")
+            return
 
-            st.markdown("### ✅ Ativar / Desativar")
-            ids = dfu["id"].tolist()
-            uid = st.selectbox("Usuário (ID)", ids)
-            ativo_atual = bool(dfu.loc[dfu["id"] == uid, "ativo"].iloc[0])
+        df = pd.DataFrame(users)
+        df["criado_em"] = pd.to_datetime(df["criado_em"]).dt.strftime("%d/%m/%Y %H:%M")
+        df = df.rename(columns={
+            "id": "ID",
+            "username": "Usuário",
+            "nome": "Nome",
+            "perfil": "Perfil",
+            "congregacao_vinculada": "Congregação Vinculada",
+            "ativo": "Ativo",
+            "criado_em": "Criado em",
+        })
 
-            colA, colB = st.columns(2)
-            with colA:
-                st.caption(f"Status atual: {'ATIVO' if ativo_atual else 'INATIVO'}")
-            with colB:
-                novo = st.selectbox("Novo status", [True, False], index=0 if ativo_atual else 1)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
-            if st.button("Atualizar status", use_container_width=True):
-                try:
-                    set_user_active(int(uid), bool(novo))
-                    st.success("Status atualizado.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro: {e}")
+        ids = df["ID"].tolist()
+        sel = st.selectbox("Selecione o usuário pelo ID", ids)
 
-    with tab3:
-        users = list_users()
-        if not users:
-            st.info("Nenhum usuário encontrado.")
-        else:
-            dfu = pd.DataFrame(users)
-            options = [f"{r['id']} - {r['username']} ({r['perfil']})" for r in users]
-            sel = st.selectbox("Selecione o usuário", options)
-            user_id = int(sel.split(" - ")[0])
-
-            nova = st.text_input("🔒 Nova senha*", type="password", placeholder="Digite a nova senha")
-            if st.button("Resetar senha", use_container_width=True):
+        colA, colB, colC = st.columns(3)
+        with colA:
+            if st.button("🔒 Desativar", use_container_width=True):
+                set_user_active(int(sel), False)
+                st.success("Usuário desativado.")
+                st.rerun()
+        with colB:
+            if st.button("🔓 Ativar", use_container_width=True):
+                set_user_active(int(sel), True)
+                st.success("Usuário ativado.")
+                st.rerun()
+        with colC:
+            nova = st.text_input("Nova senha (reset)", type="password", placeholder="Digite uma nova senha")
+            if st.button("♻️ Resetar senha", use_container_width=True):
                 if not nova:
-                    st.error("Informe a nova senha.")
+                    st.error("Digite a nova senha.")
                 else:
-                    try:
-                        reset_password(user_id, nova)
-                        st.success("Senha atualizada.")
-                    except Exception as e:
-                        st.error(f"Erro: {e}")
+                    reset_password(int(sel), nova)
+                    st.success("Senha atualizada.")
+                    st.rerun()
 
 # =========================
 # Main
@@ -1009,8 +862,6 @@ def page_usuarios():
 def main():
     apply_css()
     init_state()
-
-    # init DB structures
     init_auth()
     init_events()
 
@@ -1032,7 +883,6 @@ def main():
         page_login()
         return
 
-    # Rotas logadas
     if page == "Cadastrar Evento":
         page_cadastrar_evento()
     elif page == "Gerenciar Eventos":
