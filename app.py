@@ -1,14 +1,15 @@
 # app.py
-
-import io
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime, timedelta
-import streamlit.components.v1 as components
+from io import BytesIO
+import urllib.request
 
+# ReportLab (PDF)
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import cm
+from reportlab.lib.colors import HexColor
 
 from agenda_igreja.db import test_db_connection
 from agenda_igreja.auth import (
@@ -41,6 +42,10 @@ from agenda_igreja.ui import (
 LOGO_URL = "https://i.ibb.co/jZkYm687/logo-adtce.jpg"
 IGREJA_NOME = "Igreja Assembleia de Deus Templo Central | Quixeramobim-Ce"
 
+
+# =========================
+# Configuração da página
+# =========================
 st.set_page_config(
     page_title="Agenda da Igreja",
     page_icon="📅",
@@ -48,216 +53,400 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# =========================
+# Paleta (cinza claro + azul)
+# =========================
 COLORS = {
-    "primary": "#0A1F44",
-    "secondary": "#1A365D",
-    "accent": "#2563EB",
-    "accent2": "#1D4ED8",
-    "success": "#16A34A",
-    "warning": "#D97706",
-    "danger": "#DC2626",
-    "background": "#F3F4F6",
+    "primary": "#0A1F44",       # azul escuro
+    "secondary": "#12315F",
+    "accent": "#2563EB",        # azul vivo para foco/CTAs
+    "light": "#E8F0FF",
+    "bg": "#F3F4F6",            # cinza claro
     "card": "#FFFFFF",
+    "text": "#0F172A",
+    "muted": "#64748B",
     "border": "#E5E7EB",
-    "text": "#111827",
-    "text_light": "#6B7280",
+    "success": "#16A34A",
+    "danger": "#DC2626",
+    "warning": "#D97706"
 }
 
-
+# =========================
+# CSS (moderno, sem pílulas vazias)
+# =========================
 def apply_css():
     css = f"""
     <style>
+    /* App background */
     .stApp {{
-        background: {COLORS['background']};
+        background: {COLORS['bg']};
     }}
+
     .block-container {{
         padding-top: 1rem;
         padding-bottom: 2rem;
+        max-width: 1200px;
     }}
 
+    /* Sidebar */
     [data-testid="stSidebar"] {{
         background: linear-gradient(180deg, {COLORS['primary']} 0%, {COLORS['secondary']} 100%);
         border-right: none;
     }}
 
-    .modern-card {{
+    /* Topbar */
+    .topbar {{
         background: {COLORS['card']};
         border: 1px solid {COLORS['border']};
-        border-radius: 14px;
-        padding: 16px;
-        box-shadow: 0 6px 18px rgba(0,0,0,0.06);
+        border-radius: 18px;
+        padding: 18px 18px;
+        box-shadow: 0 10px 25px rgba(2, 6, 23, 0.06);
         margin-bottom: 14px;
     }}
-
-    .topbar {{
-        background: linear-gradient(135deg, {COLORS['primary']} 0%, {COLORS['secondary']} 100%);
-        border-radius: 16px;
-        padding: 1.2rem 1.4rem;
-        margin-bottom: 1.2rem;
-        color: white;
-        box-shadow: 0 14px 30px rgba(10, 31, 68, 0.18);
-    }}
-    .topbar-content {{
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
+    .topbar-row {{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap: 16px;
         flex-wrap: wrap;
     }}
-    .church-info {{
-        display: flex;
-        align-items: center;
+    .brand {{
+        display:flex;
+        align-items:center;
         gap: 12px;
         min-width: 280px;
     }}
-    .logo-wrap img {{
-        width: 64px;
-        height: 64px;
+    .brand img {{
+        width: 58px;
+        height: 58px;
         border-radius: 14px;
         object-fit: cover;
-        border: 3px solid rgba(255,255,255,0.18);
+        border: 1px solid {COLORS['border']};
     }}
-    .church-text h1 {{
+    .brand-title {{
+        font-weight: 900;
         font-size: 1.2rem;
-        font-weight: 900;
-        margin: 0;
-        color: white;
-        line-height: 1.15;
+        color: {COLORS['primary']};
+        margin:0;
+        line-height:1.15;
     }}
-    .church-text p {{
-        font-size: 0.9rem;
-        opacity: 0.92;
+    .brand-sub {{
+        color: {COLORS['muted']};
         margin: 4px 0 0 0;
-        font-weight: 700;
+        font-weight: 600;
+        font-size: 0.92rem;
     }}
-
-    .badge {{
-        display: inline-flex;
-        align-items: center;
-        padding: 0.18rem 0.65rem;
+    .status-pill {{
+        display:inline-flex;
+        align-items:center;
+        gap: 8px;
+        background: {COLORS['light']};
+        border: 1px solid rgba(37,99,235,0.25);
+        color: {COLORS['primary']};
+        padding: 8px 12px;
         border-radius: 999px;
-        font-size: 0.75rem;
-        font-weight: 900;
-        border: 1px solid rgba(0,0,0,0.06);
-        background: rgba(37,99,235,0.10);
-        color: {COLORS['accent2']};
+        font-weight: 800;
+        font-size: 0.85rem;
+        white-space: nowrap;
+    }}
+    .dot {{
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: {COLORS['success']};
+        box-shadow: 0 0 0 3px rgba(22,163,74,0.12);
     }}
 
+    /* Page tabs (top nav buttons) */
+    .page-tabs-wrap {{
+        background: {COLORS['card']};
+        border: 1px solid {COLORS['border']};
+        border-radius: 18px;
+        padding: 12px;
+        box-shadow: 0 10px 25px rgba(2, 6, 23, 0.05);
+        margin-bottom: 14px;
+    }}
+
+    /* Buttons */
     .stButton > button {{
-        border-radius: 10px;
-        font-weight: 900;
-        transition: all 0.2s ease;
-        padding-top: 0.58rem;
-        padding-bottom: 0.58rem;
-        text-align: center;
-        white-space: nowrap;
+        border-radius: 12px !important;
+        font-weight: 900 !important;
+        transition: all .2s ease !important;
     }}
     .stButton > button:hover {{
         transform: translateY(-1px);
     }}
     div[data-testid="stButton"] > button[kind="primary"] {{
-        background: linear-gradient(135deg, {COLORS['accent2']} 0%, {COLORS['accent']} 100%);
-        border: none;
+        background: linear-gradient(135deg, {COLORS['primary']} 0%, {COLORS['accent']} 100%) !important;
+        border: none !important;
+        color: white !important;
     }}
     div[data-testid="stButton"] > button[kind="secondary"] {{
-        background: white;
-        color: {COLORS['primary']};
-        border: 2px solid {COLORS['border']};
+        background: white !important;
+        color: {COLORS['primary']} !important;
+        border: 2px solid rgba(10,31,68,0.18) !important;
     }}
 
-    /* Inputs mais bonitos */
-    .stTextInput input,
-    .stDateInput input,
-    .stTimeInput input,
-    .stTextArea textarea {{
-        border-radius: 10px;
-        border: 2px solid {COLORS['border']};
-        background: #FFFFFF;
-    }}
-    .stTextInput input:focus,
-    .stDateInput input:focus,
-    .stTimeInput input:focus,
-    .stTextArea textarea:focus {{
-        border-color: {COLORS['accent']};
-        box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
-    }}
-
-    /* Filtros em cards e alinhamento */
-    .filter-label {{
-        font-weight: 900;
-        color: {COLORS['primary']};
-        margin-bottom: 10px;
-        font-size: 0.95rem;
-    }}
-    .filter-card {{
-        background: white;
+    /* Modern card */
+    .modern-card {{
+        background: {COLORS['card']};
         border: 1px solid {COLORS['border']};
-        border-radius: 14px;
-        padding: 14px;
-        box-shadow: 0 6px 16px rgba(0,0,0,0.06);
+        border-radius: 18px;
+        padding: 18px;
+        box-shadow: 0 10px 25px rgba(2, 6, 23, 0.06);
+        margin-bottom: 12px;
     }}
-    .filter-card [data-baseweb="select"] > div {{
-        border-radius: 10px;
-        border: 2px solid {COLORS['border']};
+    .card-title {{
+        margin: 0;
+        font-size: 1.35rem;
+        font-weight: 950;
+        color: {COLORS['primary']};
+    }}
+    .card-sub {{
+        margin: 8px 0 0 0;
+        color: {COLORS['muted']};
+        font-weight: 600;
     }}
 
+    /* Filtros: estiliza o container real dos widgets (sem “pílula vazia”) */
+    .filter-label {{
+        font-weight: 950;
+        color: {COLORS['primary']};
+        margin-bottom: 8px;
+        font-size: 0.96rem;
+        display:flex;
+        align-items:center;
+        gap: 8px;
+    }}
+    div[data-testid="stDateInput"],
+    div[data-testid="stSelectbox"] {{
+        background: #FFFFFF;
+        border: 1px solid {COLORS['border']};
+        border-radius: 16px;
+        padding: 12px 12px 10px 12px;
+        box-shadow: 0 8px 18px rgba(2, 6, 23, 0.06);
+    }}
+    div[data-testid="stDateInput"] > div,
+    div[data-testid="stSelectbox"] > div {{
+        padding: 0 !important;
+        margin: 0 !important;
+    }}
+    div[data-testid="stDateInput"] input {{
+        border-radius: 12px !important;
+        border: 2px solid {COLORS['border']} !important;
+        padding: 12px 12px !important;
+        font-weight: 900 !important;
+        background: #F8FAFC !important;
+    }}
+    div[data-testid="stSelectbox"] [data-baseweb="select"] > div {{
+        border-radius: 12px !important;
+        border: 2px solid {COLORS['border']} !important;
+        background: #F8FAFC !important;
+    }}
+    div[data-testid="stDateInput"] input:focus {{
+        border-color: {COLORS['accent']} !important;
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.12) !important;
+    }}
+    div[data-testid="stSelectbox"] [data-baseweb="select"] > div:focus-within {{
+        border-color: {COLORS['accent']} !important;
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.12) !important;
+    }}
+
+    /* Streamlit tabs (Cultos/EBD/Oração/Ensaios) */
     .stTabs [data-baseweb="tab-list"] {{
         gap: 8px;
-        background: rgba(255,255,255,0.75);
-        padding: 8px;
-        border-radius: 12px;
+        background: {COLORS['card']};
         border: 1px solid {COLORS['border']};
+        padding: 8px;
+        border-radius: 16px;
+        box-shadow: 0 8px 18px rgba(2, 6, 23, 0.05);
     }}
     .stTabs [data-baseweb="tab"] {{
-        height: 42px;
-        border-radius: 10px;
-        padding: 8px 14px;
-        color: {COLORS['text_light']};
+        border-radius: 12px;
+        padding: 10px 14px;
         font-weight: 900;
+        color: {COLORS['muted']};
     }}
     .stTabs [aria-selected="true"] {{
         background: {COLORS['primary']} !important;
         color: white !important;
     }}
 
+    /* Event cards */
     .event-card {{
-        background: white;
+        background: {COLORS['card']};
         border: 1px solid {COLORS['border']};
-        border-radius: 12px;
-        padding: 14px;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.05);
+        border-radius: 16px;
+        padding: 16px;
+        box-shadow: 0 10px 22px rgba(2, 6, 23, 0.06);
         margin-bottom: 12px;
         border-left: 5px solid {COLORS['accent']};
     }}
-    .event-day {{
+    .weekday-line {{
+        font-weight: 1000;
+        letter-spacing: .5px;
+        color: {COLORS['primary']};
+        text-transform: uppercase;
+        font-size: 0.86rem;
+        margin-bottom: 6px;
+    }}
+
+    /* A4 preview */
+    .a4-wrap {{
+        display:flex;
+        justify-content:center;
+        margin-top: 8px;
+    }}
+    .a4-page {{
+        width: 794px; /* ~A4 at 96dpi */
+        min-height: 1123px;
+        background: white;
+        border: 1px solid {COLORS['border']};
+        border-radius: 14px;
+        box-shadow: 0 15px 35px rgba(2,6,23,0.10);
+        padding: 28px 30px;
+        position: relative;
+    }}
+    .a4-header {{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap: 16px;
+        border-bottom: 3px solid {COLORS['primary']};
+        padding-bottom: 12px;
+        margin-bottom: 12px;
+    }}
+    .a4-brand {{
+        display:flex;
+        align-items:center;
+        gap: 12px;
+    }}
+    .a4-brand img {{
+        width: 54px;
+        height: 54px;
+        border-radius: 12px;
+        object-fit: cover;
+        border: 1px solid {COLORS['border']};
+    }}
+    .a4-igreja {{
+        font-weight: 950;
+        color: {COLORS['primary']};
+        margin: 0;
+        line-height: 1.15;
+        font-size: 0.98rem;
+    }}
+    .a4-sub {{
+        margin: 4px 0 0 0;
+        color: {COLORS['muted']};
+        font-weight: 700;
+        font-size: 0.85rem;
+    }}
+    .a4-right {{
+        text-align:right;
+        color: {COLORS['muted']};
+        font-weight: 800;
+        font-size: 0.85rem;
+    }}
+    .a4-title {{
+        text-align:center;
         font-weight: 1000;
         color: {COLORS['primary']};
-        font-size: 0.86rem;
+        margin: 12px 0 14px 0;
+        letter-spacing: .6px;
+    }}
+    .a4-day {{
+        margin-top: 14px;
+        font-weight: 1000;
+        color: {COLORS['primary']};
         text-transform: uppercase;
-        margin-bottom: 7px;
-        letter-spacing: 0.4px;
+        font-size: 0.92rem;
+    }}
+    .a4-item {{
+        margin-top: 6px;
+        padding-left: 12px;
+        border-left: 3px solid rgba(10,31,68,0.18);
+        color: {COLORS['text']};
+        font-weight: 650;
+        font-size: 0.9rem;
+        line-height: 1.35;
+    }}
+    .a4-meta {{
+        color: {COLORS['muted']};
+        font-weight: 700;
+        font-size: 0.86rem;
+        margin-top: 2px;
+    }}
+
+    @media (max-width: 900px) {{
+        .a4-page {{
+            width: 100%;
+            border-radius: 14px;
+        }}
     }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
 
+# =========================
+# Helpers
+# =========================
+def init_state():
+    st.session_state.setdefault("auth_ok", False)
+    st.session_state.setdefault("user", None)
+    st.session_state.setdefault("page", "Agenda Pública")
+    st.session_state.setdefault("edit_id", None)
+    st.session_state.setdefault("show_dirigentes_extra", False)
+    st.session_state.setdefault("show_portaria_extra", False)
+    st.session_state.setdefault("show_recepcao_extra", False)
+
+def week_bounds(ref: date):
+    monday = ref - timedelta(days=ref.weekday())
+    sunday = monday + timedelta(days=6)
+    return monday, sunday
+
+def _fmt_date_br(d: date) -> str:
+    return d.strftime("%d/%m/%Y")
+
+def _fmt_time_hhmm(t) -> str:
+    try:
+        return str(t)[:5]
+    except Exception:
+        return ""
+
+def join_people(*args):
+    return ", ".join([a for a in args if a])
+
+def weekday_pt(d: date) -> str:
+    # Monday=0
+    names = ["SEGUNDA-FEIRA", "TERÇA-FEIRA", "QUARTA-FEIRA", "QUINTA-FEIRA", "SEXTA-FEIRA", "SÁBADO", "DOMINGO"]
+    try:
+        return names[d.weekday()]
+    except Exception:
+        return ""
+
+def safe_upper(s: str) -> str:
+    return (s or "").strip().upper()
+
 def render_topbar():
+    ok, msg = test_db_connection()
+    status = "Online" if ok else "Offline"
+    dot_color = COLORS["success"] if ok else COLORS["danger"]
     st.markdown(
         f"""
         <div class="topbar">
-          <div class="topbar-content">
-            <div class="church-info">
-              <div class="logo-wrap">
-                <img src="{LOGO_URL}" />
-              </div>
-              <div class="church-text">
-                <h1>{IGREJA_NOME}</h1>
-                <p>Sistema de Gestão de Agenda</p>
+          <div class="topbar-row">
+            <div class="brand">
+              <img src="{LOGO_URL}" />
+              <div>
+                <p class="brand-title">{IGREJA_NOME}</p>
+                <p class="brand-sub">Agenda semanal de eventos</p>
               </div>
             </div>
-            <div>
-              <span class="badge">Online</span>
+            <div class="status-pill">
+              <span class="dot" style="background:{dot_color}; box-shadow: 0 0 0 3px rgba(22,163,74,0.12);"></span>
+              {status}
+              <span style="opacity:.7;">{msg}</span>
             </div>
           </div>
         </div>
@@ -265,8 +454,8 @@ def render_topbar():
         unsafe_allow_html=True
     )
 
-
 def render_page_tabs():
+    # Páginas
     if not st.session_state.auth_ok:
         pages = [
             {"id": "Agenda Pública", "label": "📅 Agenda Pública"},
@@ -282,407 +471,54 @@ def render_page_tabs():
         if has_role("ADMIN"):
             pages.append({"id": "Usuários", "label": "👥 Usuários"})
 
-    cols = st.columns(len(pages), vertical_alignment="center")
+    st.markdown('<div class="page-tabs-wrap">', unsafe_allow_html=True)
+    cols = st.columns(len(pages))
     for col, p in zip(cols, pages):
         with col:
-            active = (st.session_state.page == p["id"])
-            btn_type = "primary" if active else "secondary"
-            if st.button(p["label"], key=f"nav_{p['id']}", type=btn_type, use_container_width=True):
+            is_active = st.session_state.page == p["id"]
+            btn_type = "primary" if is_active else "secondary"
+            if st.button(p["label"], type=btn_type, use_container_width=True, key=f"top_{p['id']}"):
                 st.session_state.page = p["id"]
                 st.rerun()
-
-
-def init_state():
-    st.session_state.setdefault("auth_ok", False)
-    st.session_state.setdefault("user", None)
-    st.session_state.setdefault("page", "Agenda Pública")
-    st.session_state.setdefault("edit_id", None)
-    st.session_state.setdefault("show_dirigentes_extra", False)
-    st.session_state.setdefault("show_portaria_extra", False)
-    st.session_state.setdefault("show_recepcao_extra", False)
-
-
-def week_bounds(ref: date):
-    monday = ref - timedelta(days=ref.weekday())
-    sunday = monday + timedelta(days=6)
-    return monday, sunday
-
-
-def _fmt_date_br(d: date) -> str:
-    return d.strftime("%d/%m/%Y")
-
-
-def _fmt_time_hhmm(t) -> str:
-    try:
-        return str(t)[:5]
-    except Exception:
-        return ""
-
-
-def join_people(*args):
-    return ", ".join([a for a in args if a])
-
-
-def weekday_pt_br(d: date) -> str:
-    dias = ["SEGUNDA-FEIRA", "TERÇA-FEIRA", "QUARTA-FEIRA", "QUINTA-FEIRA", "SEXTA-FEIRA", "SÁBADO", "DOMINGO"]
-    return dias[d.weekday()]
-
-
-def _event_card(ev: dict):
-    d = pd.to_datetime(ev["data"]).date() if ev.get("data") else date.today()
-    dia_sem = weekday_pt_br(d)
-    data_txt = _fmt_date_br(d)
-    hora_txt = _fmt_time_hhmm(ev.get("horario"))
-    congreg = ev.get("congregacao") or ""
-    tipo_txt = format_tipo(ev)
-
-    dirigentes = join_people(ev.get("dirigente1"), ev.get("dirigente2"), ev.get("dirigente3"))
-    portaria = join_people(ev.get("portaria1"), ev.get("portaria2"), ev.get("portaria3"))
-    recepcao = join_people(ev.get("recepcao1"), ev.get("recepcao2"), ev.get("recepcao3"))
-
-    tags = []
-    if ev.get("subtipo"):
-        tags.append(f"<span class='badge'>{ev.get('subtipo')}</span>")
-    if ev.get("turma_ebd"):
-        tags.append(f"<span class='badge'>{ev.get('turma_ebd')}</span>")
-    if ev.get("secretaria"):
-        tags.append(f"<span class='badge'>{ev.get('secretaria')}</span>")
-    badges = "".join(tags)
-
-    st.markdown(
-        f"""
-        <div class="event-card">
-          <div class="event-day">{dia_sem}</div>
-          <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
-            <div style="font-weight:1000; color:{COLORS['primary']}; font-size:1.05rem;">{tipo_txt}</div>
-            <div>{badges}</div>
-          </div>
-          <div style="margin-top:6px; color:{COLORS['text_light']}; font-weight:900; font-size:0.9rem;">
-            {data_txt} • {hora_txt} • {congreg}
-          </div>
-          <div style="margin-top:10px; color:{COLORS['text']}; font-size:0.95rem;">
-            <div><b>Dirigentes</b> {dirigentes or "Não informado"}</div>
-            <div><b>Portaria</b> {portaria or "Não informado"}</div>
-            <div><b>Recepção</b> {recepcao or "Não informado"}</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-def build_a4_html(eventos: list, monday: date, sunday: date, congregacao_label: str):
-    periodo = f"{_fmt_date_br(monday)} a {_fmt_date_br(sunday)}"
-
-    # CSS dentro do HTML para funcionar no iframe do components.html
-    a4_css = f"""
-    <style>
-      body {{
-        margin: 0;
-        background: {COLORS['background']};
-      }}
-      .a4-wrap {{
-        display:flex;
-        justify-content:center;
-        width: 100%;
-        padding: 18px 0;
-      }}
-      .a4-sheet {{
-        width: 21cm;
-        min-height: 29.7cm;
-        background: white;
-        border: 1px solid {COLORS['border']};
-        box-shadow: 0 12px 28px rgba(0,0,0,0.08);
-        padding: 1.4cm 1.6cm;
-        font-family: Arial, sans-serif;
-        font-size: 10.2pt;
-        line-height: 1.35;
-        color: {COLORS['text']};
-      }}
-      .a4-topline {{
-        height: 6px;
-        background: {COLORS['primary']};
-        border-radius: 6px;
-        margin-bottom: 12px;
-      }}
-      .a4-header {{
-        display:flex;
-        align-items:center;
-        justify-content:space-between;
-        gap: 10px;
-        margin-bottom: 10px;
-      }}
-      .a4-brand {{
-        display:flex;
-        align-items:center;
-        gap: 10px;
-      }}
-      .a4-logo {{
-        width: 46px;
-        height: 46px;
-        border-radius: 10px;
-        object-fit: cover;
-        border: 1px solid {COLORS['border']};
-      }}
-      .a4-org {{
-        font-weight: 900;
-        color: {COLORS['primary']};
-        font-size: 9.7pt;
-      }}
-      .a4-sub {{
-        color: {COLORS['text_light']};
-        font-weight: 800;
-        font-size: 8.7pt;
-        margin-top: 2px;
-      }}
-      .a4-right {{
-        text-align:right;
-        color: {COLORS['text_light']};
-        font-weight: 900;
-        font-size: 8.7pt;
-      }}
-      .a4-title {{
-        text-align:center;
-        font-weight: 1000;
-        color: {COLORS['primary']};
-        margin: 12px 0 10px 0;
-        font-size: 11pt;
-        letter-spacing: 0.3px;
-      }}
-      .a4-day {{
-        margin-top: 12px;
-        font-weight: 1000;
-        color: {COLORS['primary']};
-        border-bottom: 1px solid {COLORS['border']};
-        padding-bottom: 4px;
-        text-transform: uppercase;
-      }}
-      .a4-item {{
-        margin-top: 7px;
-      }}
-      .a4-dot {{
-        color: {COLORS['accent2']};
-        font-weight: 1000;
-        margin-right: 6px;
-      }}
-      .a4-muted {{
-        color: {COLORS['text_light']};
-        font-weight: 800;
-        margin-top: 8px;
-      }}
-      @media print {{
-        body {{
-          background: white;
-        }}
-        .a4-wrap {{
-          padding: 0;
-        }}
-        .a4-sheet {{
-          box-shadow: none;
-          border: none;
-        }}
-      }}
-    </style>
-    """
-
-    header = f"""
-    {a4_css}
-    <div class="a4-wrap">
-      <div class="a4-sheet">
-        <div class="a4-topline"></div>
-        <div class="a4-header">
-          <div class="a4-brand">
-            <img class="a4-logo" src="{LOGO_URL}">
-            <div>
-              <div class="a4-org">{IGREJA_NOME}</div>
-              <div class="a4-sub">Agenda semanal oficial</div>
-            </div>
-          </div>
-          <div class="a4-right">Congregação: {congregacao_label}</div>
-        </div>
-        <div class="a4-title">RODÍZIO SEMANAL – PERÍODO DE {periodo}</div>
-    """
-
-    if not eventos:
-        return header + "<div class='a4-muted'>Nenhum evento cadastrado neste período.</div></div></div>"
-
-    df = pd.DataFrame(eventos).copy()
-    df["data"] = pd.to_datetime(df["data"]).dt.date
-    df["horario_txt"] = df["horario"].astype(str).str[:5]
-    df = df.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
-
-    parts = [header]
-
-    for d, sub in df.groupby("data"):
-        parts.append(f"<div class='a4-day'>{weekday_pt_br(d)}</div>")
-
-        for _, r in sub.iterrows():
-            hora = (r.get("horario_txt") or "").strip()
-            tipo_txt = format_tipo(r.to_dict())
-            congreg = r.get("congregacao") or ""
-
-            dirigentes = join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3"))
-            portaria = join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3"))
-            recepcao = join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3"))
-
-            linhas = []
-            linhas.append(f"<span class='a4-dot'>•</span> <b>{hora}</b> <b>{tipo_txt}</b> <span style='color:{COLORS['accent2']}; font-weight:1000;'>({congreg})</span>")
-
-            extra = []
-            if dirigentes:
-                extra.append(f"<b>Dirigentes</b> {dirigentes}")
-            if portaria:
-                extra.append(f"<b>Portaria</b> {portaria}")
-            if recepcao:
-                extra.append(f"<b>Recepção</b> {recepcao}")
-            if r.get("secretaria"):
-                extra.append(f"<b>Secretaria</b> {r.get('secretaria')}")
-            if r.get("observacoes"):
-                extra.append(f"<b>Obs</b> {r.get('observacoes')}")
-
-            if extra:
-                linhas.append("<br/>" + "<br/>".join(extra))
-
-            parts.append(f"<div class='a4-item'>{''.join(linhas)}</div>")
-
-    parts.append("</div></div>")
-    return "".join(parts)
-
-
-def gerar_pdf_a4(eventos: list, monday: date, sunday: date, congregacao_label: str) -> bytes:
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    w, h = A4
-
-    x_left = 2.0 * cm
-    y = h - 2.0 * cm
-
-    c.setFillColorRGB(0.04, 0.12, 0.27)
-    c.rect(x_left, y, w - (4.0 * cm), 0.18 * cm, stroke=0, fill=1)
-    y -= 0.55 * cm
-
-    c.setFillColorRGB(0, 0, 0)
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(x_left, y, IGREJA_NOME[:85])
-
-    c.setFont("Helvetica", 8.5)
-    c.setFillColorRGB(0.35, 0.38, 0.42)
-    c.drawRightString(w - 2.0 * cm, y, f"Congregação: {congregacao_label}")
-    y -= 0.65 * cm
-
-    c.setFillColorRGB(0.04, 0.12, 0.27)
-    c.setFont("Helvetica-Bold", 10.2)
-    c.drawCentredString(w / 2, y, f"RODÍZIO SEMANAL – PERÍODO DE {_fmt_date_br(monday)} a {_fmt_date_br(sunday)}")
-    y -= 0.75 * cm
-
-    if not eventos:
-        c.setFillColorRGB(0.35, 0.38, 0.42)
-        c.setFont("Helvetica", 9)
-        c.drawString(x_left, y, "Nenhum evento cadastrado neste período.")
-        c.save()
-        buf.seek(0)
-        return buf.read()
-
-    df = pd.DataFrame(eventos).copy()
-    df["data"] = pd.to_datetime(df["data"]).dt.date
-    df["horario_txt"] = df["horario"].astype(str).str[:5]
-    df = df.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
-
-    c.setFillColorRGB(0, 0, 0)
-    for d, sub in df.groupby("data"):
-        if y < 3.0 * cm:
-            c.showPage()
-            y = h - 2.0 * cm
-
-        c.setFillColorRGB(0.04, 0.12, 0.27)
-        c.setFont("Helvetica-Bold", 9.6)
-        c.drawString(x_left, y, weekday_pt_br(d))
-        y -= 0.45 * cm
-
-        c.setFillColorRGB(0, 0, 0)
-        c.setFont("Helvetica", 9)
-        for _, r in sub.iterrows():
-            if y < 2.2 * cm:
-                c.showPage()
-                y = h - 2.0 * cm
-
-            hora = (r.get("horario_txt") or "").strip()
-            tipo_txt = format_tipo(r.to_dict())
-            congreg = r.get("congregacao") or ""
-
-            line = f"• {hora}  {tipo_txt} ({congreg})"
-            c.drawString(x_left, y, line[:115])
-            y -= 0.42 * cm
-
-            extras = []
-            dirigentes = join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3"))
-            portaria = join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3"))
-            recepcao = join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3"))
-
-            if dirigentes:
-                extras.append(("Dirigentes", dirigentes))
-            if portaria:
-                extras.append(("Portaria", portaria))
-            if recepcao:
-                extras.append(("Recepção", recepcao))
-            if r.get("secretaria"):
-                extras.append(("Secretaria", str(r.get("secretaria"))))
-            if r.get("observacoes"):
-                extras.append(("Obs", str(r.get("observacoes"))))
-
-            if extras:
-                c.setFillColorRGB(0.35, 0.38, 0.42)
-                c.setFont("Helvetica", 8.6)
-                for label, val in extras:
-                    if y < 2.2 * cm:
-                        c.showPage()
-                        y = h - 2.0 * cm
-                    c.drawString(x_left + 0.55 * cm, y, f"{label}: {val}"[:125])
-                    y -= 0.38 * cm
-                c.setFillColorRGB(0, 0, 0)
-                c.setFont("Helvetica", 9)
-
-        y -= 0.2 * cm
-
-    c.save()
-    buf.seek(0)
-    return buf.read()
-
+    st.markdown("</div>", unsafe_allow_html=True)
 
 def sidebar():
     with st.sidebar:
+        # header sidebar
         st.markdown(
             f"""
-            <div style="text-align:center; margin-bottom: 1.2rem;">
-              <img src="{LOGO_URL}" style="width:58px; height:58px; border-radius:12px; border:2px solid rgba(255,255,255,0.18); object-fit:cover;">
-              <div style="margin-top:10px; color:white; font-weight:1000;">Agenda da Igreja</div>
+            <div style="text-align:center; padding: 14px 10px 10px 10px;">
+              <img src="{LOGO_URL}" style="width:58px; height:58px; border-radius:14px; border:2px solid rgba(255,255,255,0.15); object-fit:cover;">
+              <div style="margin-top:10px; color:white; font-weight:950;">Agenda</div>
+              <div style="color:rgba(255,255,255,0.75); font-weight:700; font-size:.82rem;">Acesso rápido</div>
             </div>
             """,
             unsafe_allow_html=True
         )
 
-        ok, msg = test_db_connection()
-        cor = "#22C55E" if ok else "#EF4444"
-        st.markdown(
-            f"<div style='text-align:center; font-weight:900; color:{cor}; font-size:0.85rem; margin-bottom: 0.7rem;'>{msg}</div>",
-            unsafe_allow_html=True
-        )
         st.divider()
 
-        if st.session_state.auth_ok:
+        # Botões pedidos: Login e Agenda Pública
+        if st.button("📅 Agenda Pública", use_container_width=True, type="secondary"):
+            st.session_state.page = "Agenda Pública"
+            st.rerun()
+
+        if not st.session_state.auth_ok:
+            if st.button("🔐 Login", use_container_width=True, type="secondary"):
+                st.session_state.page = "Login"
+                st.rerun()
+        else:
             user = st.session_state.user or {}
             st.markdown(
                 f"""
-                <div style="color:white; background: rgba(255,255,255,0.10); border:1px solid rgba(255,255,255,0.15);
-                            padding: 10px; border-radius: 12px; margin-bottom: 12px;">
-                  <div style="font-weight:1000;">{user.get('nome') or user.get('username')}</div>
-                  <div style="opacity:0.9; font-weight:900; font-size:0.85rem;">Perfil {user.get('perfil')}</div>
+                <div style="margin-top:10px; padding:10px; border-radius:12px; background: rgba(255,255,255,0.10); color:white;">
+                  <div style="font-weight:950;">{user.get('nome') or user.get('username')}</div>
+                  <div style="opacity:.85; font-weight:800; font-size:.85rem;">Perfil: {user.get('perfil')}</div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
-
-            if st.button("🚪 Sair", type="secondary", use_container_width=True):
+            if st.button("🚪 Sair", use_container_width=True, type="secondary"):
                 st.session_state.auth_ok = False
                 st.session_state.user = None
                 st.session_state.edit_id = None
@@ -690,36 +526,208 @@ def sidebar():
                 st.rerun()
 
         st.divider()
-
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("📅 Pública", type="secondary", use_container_width=True):
-                st.session_state.page = "Agenda Pública"
-                st.rerun()
-        with c2:
-            if not st.session_state.auth_ok:
-                if st.button("🔐 Login", type="secondary", use_container_width=True):
-                    st.session_state.page = "Login"
-                    st.rerun()
-            else:
-                if st.button("📊 Semana", type="secondary", use_container_width=True):
-                    st.session_state.page = "Agenda da Semana"
-                    st.rerun()
+        st.caption("Versão • Agenda Igreja")
 
 
-def page_login():
+# =========================
+# Event Card (com dia da semana em destaque)
+# =========================
+def _event_card(ev: dict):
+    d = pd.to_datetime(ev["data"]).date() if ev.get("data") else date.today()
+    data_txt = _fmt_date_br(d)
+    dia_semana = weekday_pt(d)
+    hora_txt = _fmt_time_hhmm(ev.get("horario"))
+    congreg = ev.get("congregacao") or ""
+
+    tipo_txt = format_tipo(ev)
+    subtipo = ev.get("subtipo") or ""
+    turma = ev.get("turma_ebd") or ""
+
+    badges = ""
+    if subtipo:
+        badges += f'<span style="display:inline-block;background:rgba(217,119,6,0.10); color:{COLORS["warning"]}; border:1px solid rgba(217,119,6,0.25); padding:4px 10px; border-radius:999px; font-weight:900; font-size:.75rem; margin-left:6px;">🎯 {subtipo}</span>'
+    if turma:
+        badges += f'<span style="display:inline-block;background:rgba(22,163,74,0.10); color:{COLORS["success"]}; border:1px solid rgba(22,163,74,0.25); padding:4px 10px; border-radius:999px; font-weight:900; font-size:.75rem; margin-left:6px;">📚 {turma}</span>'
+    if ev.get("secretaria"):
+        badges += f'<span style="display:inline-block;background:rgba(37,99,235,0.10); color:{COLORS["accent"]}; border:1px solid rgba(37,99,235,0.25); padding:4px 10px; border-radius:999px; font-weight:900; font-size:.75rem; margin-left:6px;">📋 {ev.get("secretaria")}</span>'
+
+    dirigentes = join_people(ev.get("dirigente1"), ev.get("dirigente2"), ev.get("dirigente3"))
+    portaria = join_people(ev.get("portaria1"), ev.get("portaria2"), ev.get("portaria3"))
+    recepcao = join_people(ev.get("recepcao1"), ev.get("recepcao2"), ev.get("recepcao3"))
+
     st.markdown(
         f"""
-        <div class="modern-card">
-          <h2 style="margin:0; color:{COLORS['primary']}; font-weight:1000;">🔐 Acesso ao Sistema</h2>
-          <p style="margin-top:6px; color:{COLORS['text_light']}; font-weight:800;">Área restrita para cadastro e gerenciamento.</p>
+        <div class="event-card">
+          <div class="weekday-line">{dia_semana}</div>
+
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
+            <div>
+              <div style="font-weight:1000; font-size:1.08rem; color:{COLORS['primary']};">{tipo_txt}</div>
+              <div style="font-size:.92rem; color:{COLORS['muted']}; font-weight:800; margin-top:4px;">
+                📅 {data_txt} • 🕒 {hora_txt} • 🏛️ {congreg}
+              </div>
+            </div>
+            <div style="text-align:right;">
+              {badges}
+            </div>
+          </div>
+
+          <div style="margin-top:12px; color:{COLORS['text']}; font-weight:700;">
+            <div style="margin-bottom:4px;"><span style="font-weight:1000; color:{COLORS['secondary']};">👤 Dirigentes:</span> <span style="color:{COLORS['text']}; font-weight:750;">{dirigentes or "Não informado"}</span></div>
+            <div style="margin-bottom:4px;"><span style="font-weight:1000; color:{COLORS['secondary']};">🚪 Portaria:</span> <span style="color:{COLORS['text']}; font-weight:750;">{portaria or "Não informado"}</span></div>
+            <div><span style="font-weight:1000; color:{COLORS['secondary']};">🤝 Recepção:</span> <span style="color:{COLORS['text']}; font-weight:750;">{recepcao or "Não informado"}</span></div>
+          </div>
         </div>
         """,
         unsafe_allow_html=True
     )
 
-    colL, colC, colR = st.columns([1, 1.4, 1])
-    with colC:
+
+# =========================
+# PDF A4 (ReportLab)
+# =========================
+def build_a4_pdf(eventos_df: pd.DataFrame, monday: date, sunday: date, congregacao: str) -> bytes:
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
+
+    primary = HexColor(COLORS["primary"])
+    muted = HexColor(COLORS["muted"])
+    text = HexColor(COLORS["text"])
+
+    # header line
+    c.setStrokeColor(primary)
+    c.setLineWidth(3)
+    c.line(1.6*cm, h-2.2*cm, w-1.6*cm, h-2.2*cm)
+
+    # Logo (tentativa via URL)
+    logo_drawn = False
+    try:
+        with urllib.request.urlopen(LOGO_URL, timeout=5) as r:
+            img_bytes = r.read()
+        img_stream = BytesIO(img_bytes)
+        c.drawImage(img_stream, 1.6*cm, h-2.0*cm-1.4*cm, width=1.4*cm, height=1.4*cm, mask='auto')
+        logo_drawn = True
+    except Exception:
+        logo_drawn = False
+
+    # Igreja + meta
+    x_text = 3.2*cm if logo_drawn else 1.6*cm
+    c.setFillColor(primary)
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawString(x_text, h-1.55*cm, IGREJA_NOME)
+
+    c.setFillColor(muted)
+    c.setFont("Helvetica", 8.2)
+    c.drawString(x_text, h-1.95*cm, "Agenda semanal oficial")
+
+    c.setFillColor(muted)
+    c.setFont("Helvetica-Bold", 8.2)
+    c.drawRightString(w-1.6*cm, h-1.60*cm, f"Congregação: {congregacao}")
+
+    # Title
+    periodo = f"RODÍZIO SEMANAL - PERÍODO DE {_fmt_date_br(monday)} a {_fmt_date_br(sunday)}"
+    c.setFillColor(primary)
+    c.setFont("Helvetica-Bold", 10.2)
+    c.drawCentredString(w/2, h-3.0*cm, periodo)
+
+    y = h - 3.6*cm
+    left = 1.9*cm
+    right = w - 1.9*cm
+
+    # Organiza por dia
+    if eventos_df.empty:
+        c.setFillColor(text)
+        c.setFont("Helvetica", 10)
+        c.drawString(left, y, "Nenhum evento cadastrado nesta semana.")
+        c.showPage()
+        c.save()
+        return buf.getvalue()
+
+    eventos_df = eventos_df.copy()
+    eventos_df["data_dt"] = pd.to_datetime(eventos_df["data"]).dt.date
+    eventos_df["horario_txt"] = eventos_df["horario"].astype(str).str[:5]
+    eventos_df = eventos_df.sort_values(["data_dt", "horario_txt", "congregacao"])
+
+    grouped = eventos_df.groupby("data_dt")
+
+    for d, sub in grouped:
+        # new page if needed
+        if y < 3.0*cm:
+            c.showPage()
+            y = h - 2.0*cm
+
+        # Day title
+        c.setFillColor(primary)
+        c.setFont("Helvetica-Bold", 9.7)
+        c.drawString(left, y, f"• {weekday_pt(d)}")
+        y -= 0.55*cm
+
+        # items
+        for _, r in sub.iterrows():
+            if y < 3.0*cm:
+                c.showPage()
+                y = h - 2.0*cm
+
+            hora = str(r.get("horario"))[:5] if pd.notna(r.get("horario")) else ""
+            tipo = format_tipo(r.to_dict())
+            cong = r.get("congregacao") or ""
+            dirigentes = join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3"))
+            portaria = join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3"))
+            recepcao = join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3"))
+
+            line1 = f"{hora}: {tipo} ({cong})"
+            line2_parts = []
+            if dirigentes:
+                line2_parts.append(f"Dirigentes: {dirigentes}")
+            if portaria:
+                line2_parts.append(f"Portaria: {portaria}")
+            if recepcao:
+                line2_parts.append(f"Recepção: {recepcao}")
+            line2 = "  |  ".join(line2_parts) if line2_parts else ""
+
+            c.setFillColor(text)
+            c.setFont("Helvetica-Bold", 9.0)
+            c.drawString(left+0.6*cm, y, line1)
+            y -= 0.45*cm
+
+            if line2:
+                c.setFillColor(muted)
+                c.setFont("Helvetica", 8.3)
+                # quebra manual simples se passar do limite
+                max_chars = 110
+                chunks = [line2[i:i+max_chars] for i in range(0, len(line2), max_chars)]
+                for chunk in chunks:
+                    if y < 3.0*cm:
+                        c.showPage()
+                        y = h - 2.0*cm
+                    c.drawString(left+0.9*cm, y, chunk)
+                    y -= 0.42*cm
+            y -= 0.20*cm
+
+        y -= 0.25*cm
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+# =========================
+# Pages
+# =========================
+def page_login():
+    st.markdown(
+        f"""
+        <div class="modern-card">
+          <p class="card-title">🔐 Login</p>
+          <p class="card-sub">Acesso restrito para cadastro e gerenciamento da agenda.</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    colA, colB, colC = st.columns([1, 1.2, 1])
+    with colB:
         with st.form("login_form"):
             username = st.text_input("Usuário", placeholder="Seu usuário")
             password = st.text_input("Senha", type="password", placeholder="Sua senha")
@@ -736,52 +744,42 @@ def page_login():
             else:
                 st.error("Usuário ou senha inválidos.")
 
-
 def page_agenda_publica():
     st.markdown(
         f"""
         <div class="modern-card">
-          <h2 style="margin:0; color:{COLORS['primary']}; font-weight:1000;">📅 Agenda Pública</h2>
-          <p style="margin-top:6px; color:{COLORS['text_light']}; font-weight:800;">
-            Visualização pública dos eventos. Acesso livre sem necessidade de login.
-          </p>
+          <p class="card-title">📅 Agenda Pública</p>
+          <p class="card-sub">Visualização pública dos eventos da igreja. Acesso livre sem necessidade de login.</p>
         </div>
         """,
         unsafe_allow_html=True
     )
 
-    col1, col2, col3 = st.columns([1.2, 1.0, 0.9], vertical_alignment="top")
-
+    # filtros (sem div vazia)
+    col1, col2, col3 = st.columns([1.2, 1, 0.9])
     with col1:
-        st.markdown("<div class='filter-card'>", unsafe_allow_html=True)
         st.markdown("<div class='filter-label'>📆 Semana de referência</div>", unsafe_allow_html=True)
         ref = st.date_input("Semana de referência", value=date.today(), format="DD/MM/YYYY", label_visibility="collapsed")
-        st.markdown("</div>", unsafe_allow_html=True)
-
     with col2:
-        st.markdown("<div class='filter-card'>", unsafe_allow_html=True)
         st.markdown("<div class='filter-label'>🏛️ Congregação</div>", unsafe_allow_html=True)
         congregacao = st.selectbox("Congregação", ["Todas"] + CONGREGACOES, label_visibility="collapsed")
-        st.markdown("</div>", unsafe_allow_html=True)
-
     with col3:
-        st.markdown("<div class='filter-card'>", unsafe_allow_html=True)
         st.markdown("<div class='filter-label'>👁️ Exibição</div>", unsafe_allow_html=True)
         modo = st.selectbox("Exibição", ["Cards", "Tabela"], index=0, label_visibility="collapsed")
-        st.markdown("</div>", unsafe_allow_html=True)
 
     monday, sunday = week_bounds(ref)
-    congreg_label = congregacao
 
     st.markdown(
         f"""
         <div class="modern-card">
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
             <div>
-              <div style="font-weight:1000; color:{COLORS['primary']};">📋 Resumo da Semana</div>
-              <div style="margin-top:6px; color:{COLORS['text_light']}; font-weight:900;">{_fmt_date_br(monday)} até {_fmt_date_br(sunday)}</div>
+              <div style="font-weight:1000; color:{COLORS['primary']}; font-size:1.05rem;">📋 Resumo da Semana</div>
+              <div style="margin-top:6px; color:{COLORS['muted']}; font-weight:850;">{_fmt_date_br(monday)} até {_fmt_date_br(sunday)}</div>
             </div>
-            <span class="badge">{congreg_label}</span>
+            <div style="display:inline-block;background:{COLORS['light']}; border:1px solid rgba(37,99,235,0.25); color:{COLORS['primary']}; padding:8px 12px; border-radius:999px; font-weight:950;">
+              {congregacao}
+            </div>
           </div>
         </div>
         """,
@@ -804,56 +802,25 @@ def page_agenda_publica():
     df["horario_txt"] = df["horario"].astype(str).str[:5]
     df = df.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
 
-    tab_todos, tab_culto, tab_ebd, tab_oracao, tab_ensaio = st.tabs(
-        ["🗂️ Todos (A4)", "🎵 Cultos", "📚 EBD", "🙏 Oração", "🎤 Ensaios"]
-    )
+    # Abas: Todos A4 + tipos
+    tab_all, tab_culto, tab_ebd, tab_oracao, tab_ensaio = st.tabs(["🧾 Todos (A4)", "🎵 Cultos", "📚 EBD", "🙏 Oração", "🎤 Ensaios"])
 
-    with tab_todos:
-        st.markdown(
-            f"""
-            <div class="modern-card">
-              <div style="font-weight:1000; color:{COLORS['primary']};">📄 Folha A4</div>
-              <div style="margin-top:6px; color:{COLORS['text_light']}; font-weight:800;">Pronta para imprimir ou mandar no WhatsApp.</div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        html = build_a4_html(eventos, monday, sunday, congregacao_label=congreg_label)
-        components.html(html, height=980, scrolling=True)
-
-        pdf_bytes = gerar_pdf_a4(eventos, monday, sunday, congregacao_label=congreg_label)
-        st.download_button(
-            "📥 Baixar PDF",
-            data=pdf_bytes,
-            file_name=f"agenda_{monday.strftime('%Y%m%d')}_a_{sunday.strftime('%Y%m%d')}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
-
-    def render_group(tipo_nome: str, container):
+    def render_group_cards(tipo_nome: str, container):
         with container:
             sub = df[df["tipo"] == tipo_nome].copy()
             if sub.empty:
-                st.info("Sem registros nesta semana.")
+                st.info("Sem registros aqui nesta semana.")
                 return
 
             if modo == "Tabela":
                 view = sub.copy()
-                view["Dia"] = view["data"].apply(weekday_pt_br)
                 view["Data"] = view["data"].apply(lambda x: x.strftime("%d/%m/%Y"))
+                view["Dia"] = view["data"].apply(lambda x: weekday_pt(x))
                 view["Horário"] = view["horario_txt"]
                 view["Tipo"] = view.apply(lambda r: format_tipo(r.to_dict()), axis=1)
-
-                view["Dirigentes"] = view.apply(
-                    lambda r: join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3")), axis=1
-                )
-                view["Portaria"] = view.apply(
-                    lambda r: join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3")), axis=1
-                )
-                view["Recepção"] = view.apply(
-                    lambda r: join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3")), axis=1
-                )
+                view["Dirigentes"] = view.apply(lambda r: join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3")), axis=1)
+                view["Portaria"] = view.apply(lambda r: join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3")), axis=1)
+                view["Recepção"] = view.apply(lambda r: join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3")), axis=1)
 
                 show = view[["Dia", "Data", "Horário", "congregacao", "Tipo", "Dirigentes", "Portaria", "Recepção", "secretaria"]]
                 show = show.rename(columns={"congregacao": "Congregação", "secretaria": "Secretaria"})
@@ -862,7 +829,7 @@ def page_agenda_publica():
                 png = df_to_png_bytes(show, title=f"{tipo_nome} • {_fmt_date_br(monday)} a {_fmt_date_br(sunday)}")
                 if png:
                     st.download_button(
-                        "💾 Exportar em PNG",
+                        "Exportar esta aba em PNG",
                         data=png,
                         file_name=f"agenda_{tipo_nome.lower()}_{monday.strftime('%Y%m%d')}.png",
                         mime="image/png",
@@ -873,18 +840,112 @@ def page_agenda_publica():
             for _, r in sub.iterrows():
                 _event_card(r.to_dict())
 
-    render_group("Culto", tab_culto)
-    render_group("EBD", tab_ebd)
-    render_group("Oração", tab_oracao)
-    render_group("Ensaio", tab_ensaio)
+    # A4: Todos (preview + PDF)
+    with tab_all:
+        st.markdown(
+            f"""
+            <div class="modern-card">
+              <div style="font-weight:1000; color:{COLORS['primary']}; font-size:1.05rem;">Folha A4</div>
+              <div style="margin-top:6px; color:{COLORS['muted']}; font-weight:850;">Pronta para imprimir ou mandar no WhatsApp.</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        # Preview A4 em HTML
+        df_a4 = df.copy()
+        if congregacao != "Todas":
+            cong_label = congregacao
+        else:
+            cong_label = "Todas"
+
+        # Agrupa por dia
+        groups = []
+        for d, sub in df_a4.groupby("data"):
+            sub = sub.sort_values(["horario_txt", "congregacao"])
+            items_html = ""
+            for _, r in sub.iterrows():
+                hora = r.get("horario_txt") or ""
+                tipo = format_tipo(r.to_dict())
+                cong = r.get("congregacao") or ""
+                dirigentes = join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3"))
+                portaria = join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3"))
+                recepcao = join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3"))
+
+                meta_parts = []
+                if dirigentes:
+                    meta_parts.append(f"<b>Dirigentes:</b> {dirigentes}")
+                if portaria:
+                    meta_parts.append(f"<b>Portaria:</b> {portaria}")
+                if recepcao:
+                    meta_parts.append(f"<b>Recepção:</b> {recepcao}")
+                meta = "  |  ".join(meta_parts) if meta_parts else "—"
+
+                items_html += f"""
+                <div class="a4-item">
+                  <div><b>{hora}</b>: <b>{tipo}</b> <span style="color:{COLORS['muted']}; font-weight:800;">({cong})</span></div>
+                  <div class="a4-meta">{meta}</div>
+                </div>
+                """
+
+            groups.append(
+                f"""
+                <div class="a4-day">• {weekday_pt(d)}</div>
+                {items_html}
+                """
+            )
+
+        periodo = f"RODÍZIO SEMANAL - PERÍODO DE {_fmt_date_br(monday)} a {_fmt_date_br(sunday)}"
+        html_a4 = f"""
+        <div class="a4-wrap">
+          <div class="a4-page">
+            <div class="a4-header">
+              <div class="a4-brand">
+                <img src="{LOGO_URL}" />
+                <div>
+                  <p class="a4-igreja">{IGREJA_NOME}</p>
+                  <p class="a4-sub">Agenda semanal oficial</p>
+                </div>
+              </div>
+              <div class="a4-right">
+                Congregação: {cong_label}
+              </div>
+            </div>
+
+            <div class="a4-title">{periodo}</div>
+            {''.join(groups)}
+          </div>
+        </div>
+        """
+        st.markdown(html_a4, unsafe_allow_html=True)
+
+        # PDF download
+        pdf_bytes = build_a4_pdf(
+            eventos_df=df_a4 if congregacao == "Todas" else df_a4[df_a4["congregacao"] == congregacao],
+            monday=monday,
+            sunday=sunday,
+            congregacao=cong_label
+        )
+        st.download_button(
+            "📄 Baixar PDF (A4)",
+            data=pdf_bytes,
+            file_name=f"rodizio_{monday.strftime('%Y%m%d')}_{sunday.strftime('%Y%m%d')}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+    render_group_cards("Culto", tab_culto)
+    render_group_cards("EBD", tab_ebd)
+    render_group_cards("Oração", tab_oracao)
+    render_group_cards("Ensaio", tab_ensaio)
 
 
 def page_cadastrar_evento():
     st.markdown(
         f"""
         <div class="modern-card">
-          <h2 style="margin:0; color:{COLORS['primary']}; font-weight:1000;">➕ Cadastro de Evento</h2>
-          <p style="margin-top:6px; color:{COLORS['text_light']}; font-weight:800;">Preencha as informações do evento.</p>
+          <p class="card-title">{'✏️ Editar Evento' if st.session_state.edit_id else '➕ Cadastrar Evento'}</p>
+          <p class="card-sub">Preencha as informações do evento. Os campos com * são obrigatórios.</p>
         </div>
         """,
         unsafe_allow_html=True
@@ -911,15 +972,15 @@ def page_cadastrar_evento():
 
     with col1:
         if ev and val("congregacao") in allowed_congregs:
-            congregacao = st.selectbox("🏛️ Congregação", allowed_congregs, index=allowed_congregs.index(val("congregacao")))
+            congregacao = st.selectbox("🏛️ Congregação*", allowed_congregs, index=allowed_congregs.index(val("congregacao")))
         else:
-            congregacao = st.selectbox("🏛️ Congregação", allowed_congregs, index=None, placeholder="Selecione")
+            congregacao = st.selectbox("🏛️ Congregação*", allowed_congregs, index=None, placeholder="Selecione")
 
     with col2:
         if ev and val("tipo") in TIPOS:
-            tipo = st.selectbox("📌 Tipo", TIPOS, index=TIPOS.index(val("tipo")))
+            tipo = st.selectbox("📌 Tipo da agenda*", TIPOS, index=TIPOS.index(val("tipo")))
         else:
-            tipo = st.selectbox("📌 Tipo", TIPOS, index=None, placeholder="Selecione")
+            tipo = st.selectbox("📌 Tipo da agenda*", TIPOS, index=None, placeholder="Selecione")
 
     with col3:
         subtipo = None
@@ -930,55 +991,64 @@ def page_cadastrar_evento():
             if tipo_eff == "Culto":
                 options = SUBTIPOS_CULTO
                 current = val("subtipo")
-                subtipo = st.selectbox("✨ Subtipo do Culto", options, index=options.index(current) if current in options else None, placeholder="Opcional")
+                if ev and current in options:
+                    subtipo = st.selectbox("✨ Subtipo do Culto", options, index=options.index(current))
+                else:
+                    subtipo = st.selectbox("✨ Subtipo do Culto", options, index=None, placeholder="Opcional")
 
         if (tipo == "EBD") or (ev and val("tipo") == "EBD" and tipo is None):
             tipo_eff = tipo or val("tipo")
             if tipo_eff == "EBD":
                 options = TURMAS_EBD
                 current = val("turma_ebd")
-                turma_ebd = st.selectbox("📚 Turma da EBD", options, index=options.index(current) if current in options else None, placeholder="Selecione")
+                if ev and current in options:
+                    turma_ebd = st.selectbox("📚 Turma da EBD*", options, index=options.index(current))
+                else:
+                    turma_ebd = st.selectbox("📚 Turma da EBD*", options, index=None, placeholder="Selecione")
 
     col4, col5 = st.columns(2)
     with col4:
-        data_evento = st.date_input("📅 Data", value=val("data", date.today()), format="DD/MM/YYYY")
+        data_evento = st.date_input("📅 Data*", value=val("data", date.today()), format="DD/MM/YYYY")
     with col5:
         horario_default = datetime.strptime("19:00", "%H:%M").time()
-        horario = st.time_input("🕖 Horário", value=val("horario", horario_default))
+        horario = st.time_input("🕖 Horário*", value=val("horario", horario_default))
 
-    st.markdown("<div class='modern-card'><b>👥 Equipe do Evento</b></div>", unsafe_allow_html=True)
+    st.markdown("### 👥 Equipe do Evento")
 
+    st.markdown("#### 👤 Dirigência")
     dirigente1 = st.text_input("👤 Dirigente", value=val("dirigente1", "") or "")
     st.toggle("➕ Adicionar mais dirigentes", key="show_dirigentes_extra")
     if st.session_state.show_dirigentes_extra:
-        col_d1, col_d2 = st.columns(2)
-        with col_d1:
+        c1, c2 = st.columns(2)
+        with c1:
             dirigente2 = st.text_input("👥 Dirigente 2", value=val("dirigente2", "") or "")
-        with col_d2:
+        with c2:
             dirigente3 = st.text_input("👥 Dirigente 3", value=val("dirigente3", "") or "")
     else:
         dirigente2 = val("dirigente2", "") or ""
         dirigente3 = val("dirigente3", "") or ""
 
+    st.markdown("#### 🚪 Portaria")
     portaria1 = st.text_input("🚪 Portaria", value=val("portaria1", "") or "")
     st.toggle("➕ Adicionar mais na portaria", key="show_portaria_extra")
     if st.session_state.show_portaria_extra:
-        col_p1, col_p2 = st.columns(2)
-        with col_p1:
+        c1, c2 = st.columns(2)
+        with c1:
             portaria2 = st.text_input("🚪 Portaria 2", value=val("portaria2", "") or "")
-        with col_p2:
+        with c2:
             portaria3 = st.text_input("🚪 Portaria 3", value=val("portaria3", "") or "")
     else:
         portaria2 = val("portaria2", "") or ""
         portaria3 = val("portaria3", "") or ""
 
+    st.markdown("#### 🤝 Recepção")
     recepcao1 = st.text_input("🤝 Recepção", value=val("recepcao1", "") or "")
     st.toggle("➕ Adicionar mais na recepção", key="show_recepcao_extra")
     if st.session_state.show_recepcao_extra:
-        col_r1, col_r2 = st.columns(2)
-        with col_r1:
+        c1, c2 = st.columns(2)
+        with c1:
             recepcao2 = st.text_input("🤝 Recepção 2", value=val("recepcao2", "") or "")
-        with col_r2:
+        with c2:
             recepcao3 = st.text_input("🤝 Recepção 3", value=val("recepcao3", "") or "")
     else:
         recepcao2 = val("recepcao2", "") or ""
@@ -987,10 +1057,10 @@ def page_cadastrar_evento():
     secretaria = st.text_input("🗂️ Secretaria", value=val("secretaria", "") or "")
     observacoes = st.text_area("📝 Observações", value=val("observacoes", "") or "", height=90)
 
-    c1, c2 = st.columns(2)
-    with c1:
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
         salvar = st.button("💾 Salvar", type="primary", use_container_width=True)
-    with c2:
+    with col_s2:
         cancelar = st.button("↩️ Cancelar", use_container_width=True)
 
     if cancelar:
@@ -1003,7 +1073,7 @@ def page_cadastrar_evento():
             st.error("Selecione a Congregação.")
             return
         if not tipo:
-            st.error("Selecione o Tipo.")
+            st.error("Selecione o Tipo da agenda.")
             return
         if tipo == "EBD" and not turma_ebd:
             st.error("Para EBD, selecione a Turma.")
@@ -1045,8 +1115,8 @@ def page_agenda_semana():
     st.markdown(
         f"""
         <div class="modern-card">
-          <h2 style="margin:0; color:{COLORS['primary']}; font-weight:1000;">📊 Agenda da Semana</h2>
-          <p style="margin-top:6px; color:{COLORS['text_light']}; font-weight:800;">Visualização privada com filtros.</p>
+          <p class="card-title">📊 Agenda da Semana</p>
+          <p class="card-sub">Área interna para consulta e exportação.</p>
         </div>
         """,
         unsafe_allow_html=True
@@ -1056,7 +1126,6 @@ def page_agenda_semana():
     with col1:
         ref = st.date_input("Semana de referência", value=date.today(), format="DD/MM/YYYY")
     monday, sunday = week_bounds(ref)
-
     with col2:
         congregacao = st.selectbox("Congregação", ["Todas"] + CONGREGACOES)
     with col3:
@@ -1075,7 +1144,7 @@ def page_agenda_semana():
 
     df = pd.DataFrame(eventos)
     df["Data"] = pd.to_datetime(df["data"]).dt.strftime("%d/%m/%Y")
-    df["Dia"] = pd.to_datetime(df["data"]).dt.date.apply(weekday_pt_br)
+    df["Dia"] = pd.to_datetime(df["data"]).dt.date.apply(weekday_pt)
     df["Horário"] = df["horario"].astype(str).str[:5]
     df["Tipo"] = df.apply(lambda r: format_tipo(r.to_dict()), axis=1)
 
@@ -1086,13 +1155,12 @@ def page_agenda_semana():
     view = df[["Dia", "Data", "Horário", "congregacao", "Tipo", "Dirigente", "Portaria", "Recepção", "secretaria"]].rename(
         columns={"congregacao": "Congregação", "secretaria": "Secretaria"}
     )
-
     st.dataframe(view, use_container_width=True, hide_index=True)
 
     png = df_to_png_bytes(view, title=f"Agenda {_fmt_date_br(monday)} a {_fmt_date_br(sunday)}")
     if png:
         st.download_button(
-            "💾 Exportar agenda em PNG",
+            "Exportar agenda em PNG",
             data=png,
             file_name="agenda_semana.png",
             mime="image/png",
@@ -1104,8 +1172,8 @@ def page_gerenciar_eventos():
     st.markdown(
         f"""
         <div class="modern-card">
-          <h2 style="margin:0; color:{COLORS['primary']}; font-weight:1000;">⚙️ Gerenciar Eventos</h2>
-          <p style="margin-top:6px; color:{COLORS['text_light']}; font-weight:800;">Edite ou exclua eventos.</p>
+          <p class="card-title">⚙️ Gerenciar Eventos</p>
+          <p class="card-sub">Editar ou excluir registros.</p>
         </div>
         """,
         unsafe_allow_html=True
@@ -1128,16 +1196,16 @@ def page_gerenciar_eventos():
     df["Tipo"] = df.apply(lambda r: format_tipo(r.to_dict()), axis=1)
 
     st.dataframe(df[["id", "Data", "Horário", "congregacao", "Tipo"]], use_container_width=True, hide_index=True)
-    selected = st.selectbox("Selecione o ID do evento", df["id"].tolist())
 
+    selected = st.selectbox("Selecione o ID do evento", df["id"].tolist())
     colA, colB = st.columns(2)
     with colA:
-        if st.button("✏️ Editar", type="primary", use_container_width=True):
+        if st.button("Editar", type="primary", use_container_width=True):
             st.session_state.edit_id = selected
             st.session_state.page = "Cadastrar Evento"
             st.rerun()
     with colB:
-        if st.button("🗑️ Excluir", type="secondary", use_container_width=True):
+        if st.button("Excluir", type="secondary", use_container_width=True):
             delete_event(selected)
             st.success("Evento excluído.")
             st.rerun()
@@ -1147,8 +1215,8 @@ def page_usuarios():
     st.markdown(
         f"""
         <div class="modern-card">
-          <h2 style="margin:0; color:{COLORS['primary']}; font-weight:1000;">👥 Usuários</h2>
-          <p style="margin-top:6px; color:{COLORS['text_light']}; font-weight:800;">Cadastro e gestão de acessos.</p>
+          <p class="card-title">👥 Usuários</p>
+          <p class="card-sub">Somente ADMIN pode cadastrar e gerenciar usuários.</p>
         </div>
         """,
         unsafe_allow_html=True
@@ -1163,19 +1231,19 @@ def page_usuarios():
     with tab1:
         col1, col2 = st.columns(2)
         with col1:
-            nome = st.text_input("Nome", placeholder="Nome completo")
+            nome = st.text_input("👤 Nome*", placeholder="Nome completo")
         with col2:
-            username = st.text_input("Usuário", placeholder="Ex: joao.silva")
+            username = st.text_input("🆔 Usuário*", placeholder="Ex: joao.silva")
 
         col3, col4 = st.columns(2)
         with col3:
-            senha = st.text_input("Senha", type="password", placeholder="Defina uma senha")
+            senha = st.text_input("🔑 Senha*", type="password", placeholder="Defina uma senha")
         with col4:
-            perfil = st.selectbox("Perfil", ROLES, index=None, placeholder="Escolha")
+            perfil = st.selectbox("🎚️ Perfil*", ROLES, index=None, placeholder="Escolha o perfil")
 
         congreg_vinc = None
         if perfil == "SECRETARIO":
-            congreg_vinc = st.selectbox("Congregação vinculada", CONGREGACOES, index=None, placeholder="Selecione")
+            congreg_vinc = st.selectbox("🏛️ Congregação vinculada*", CONGREGACOES, index=None, placeholder="Selecione")
 
         if st.button("Criar usuário", type="primary", use_container_width=True):
             if not nome.strip():
@@ -1222,18 +1290,18 @@ def page_usuarios():
 
         colA, colB, colC = st.columns(3)
         with colA:
-            if st.button("🔒 Desativar", type="secondary", use_container_width=True):
+            if st.button("Desativar", type="secondary", use_container_width=True):
                 set_user_active(int(sel), False)
                 st.success("Usuário desativado.")
                 st.rerun()
         with colB:
-            if st.button("🔓 Ativar", type="secondary", use_container_width=True):
+            if st.button("Ativar", type="secondary", use_container_width=True):
                 set_user_active(int(sel), True)
                 st.success("Usuário ativado.")
                 st.rerun()
         with colC:
-            nova = st.text_input("Nova senha", type="password", placeholder="Digite a nova senha", key="nova_senha")
-            if st.button("♻️ Resetar senha", type="secondary", use_container_width=True):
+            nova = st.text_input("Nova senha (reset)", type="password", placeholder="Digite uma nova senha", key="nova_senha")
+            if st.button("Resetar senha", type="secondary", use_container_width=True):
                 if not nova:
                     st.error("Digite a nova senha.")
                 else:
@@ -1242,6 +1310,9 @@ def page_usuarios():
                     st.rerun()
 
 
+# =========================
+# Main
+# =========================
 def main():
     apply_css()
     init_state()
