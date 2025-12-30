@@ -1,7 +1,14 @@
 # app.py
+import io
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime, timedelta
+
+# PDF (A4)
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
 
 from agenda_igreja.db import test_db_connection
 from agenda_igreja.auth import (
@@ -67,7 +74,6 @@ COLORS = {
 def apply_css():
     css = f"""
     <style>
-    /* Configurações gerais */
     .block-container {{
         padding-top: 1rem;
         padding-bottom: 2rem;
@@ -78,22 +84,7 @@ def apply_css():
         border-right: none;
     }}
 
-    [data-testid="stSidebarNav"] {{
-        padding-top: 2rem;
-    }}
-
-    /* Header fixo */
-    .sticky-header {{
-        position: sticky;
-        top: 0;
-        z-index: 100;
-        background: white;
-        border-bottom: 1px solid #E2E8F0;
-        padding: 1rem 0;
-        margin-bottom: 1.5rem;
-    }}
-
-    /* Tabs modernas */
+    /* Tabs */
     .stTabs [data-baseweb="tab-list"] {{
         gap: 8px;
         background-color: {COLORS['background']};
@@ -119,7 +110,7 @@ def apply_css():
         font-weight: 600;
     }}
 
-    /* Cards modernos */
+    /* Cards */
     .modern-card {{
         background: {COLORS['card']};
         border: 1px solid #E2E8F0;
@@ -145,6 +136,21 @@ def apply_css():
         border-left: 4px solid {COLORS['light']};
     }}
 
+    /* Destaque do dia da semana */
+    .weekday-pill {{
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.6px;
+        background: rgba(74, 144, 226, 0.12);
+        color: {COLORS['accent']};
+        margin-bottom: 8px;
+        text-transform: uppercase;
+    }}
+
     /* Botões */
     .stButton > button {{
         border-radius: 10px;
@@ -167,21 +173,25 @@ def apply_css():
         border: 2px solid {COLORS['primary']};
     }}
 
-    /* Inputs */
-    .stTextInput > div > div > input,
-    .stTextArea > div > div > textarea,
-    .stSelectbox > div > div > div,
-    .stDateInput > div > div > input {{
-        border-radius: 10px;
-        border: 2px solid #E2E8F0;
+    /* Inputs como card */
+    div[data-testid="stDateInput"],
+    div[data-testid="stSelectbox"],
+    div[data-testid="stTimeInput"],
+    div[data-testid="stTextInput"] {{
+      background: #FFFFFF;
+      border: 1px solid #E2E8F0;
+      border-radius: 16px;
+      padding: 14px 14px 10px 14px;
+      box-shadow: 0 6px 18px rgba(2, 6, 23, 0.06);
     }}
 
-    .stTextInput > div > div > input:focus,
-    .stTextArea > div > div > textarea:focus,
-    .stSelectbox > div > div > div:focus,
-    .stDateInput > div > div > input:focus {{
-        border-color: {COLORS['light']};
-        box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1);
+    div[data-testid="stDateInput"] label,
+    div[data-testid="stSelectbox"] label,
+    div[data-testid="stTimeInput"] label,
+    div[data-testid="stTextInput"] label {{
+      margin-bottom: 8px !important;
+      font-weight: 600 !important;
+      color: #1A202C !important;
     }}
 
     /* Topbar */
@@ -259,7 +269,6 @@ def apply_css():
         color: {COLORS['warning']};
     }}
 
-    /* Status indicators */
     .status-indicator {{
         display: inline-block;
         width: 8px;
@@ -271,44 +280,107 @@ def apply_css():
     .status-online {{ background: {COLORS['success']}; }}
     .status-offline {{ background: {COLORS['danger']}; }}
 
-    /* Divider */
     .divider {{
         height: 1px;
         background: linear-gradient(90deg, transparent, #E2E8F0, transparent);
         margin: 1.5rem 0;
-    }}
-
-    /* ===== FIX: Cards automáticos nos filtros (widgets) ===== */
-    div[data-testid="stDateInput"],
-    div[data-testid="stSelectbox"],
-    div[data-testid="stTimeInput"],
-    div[data-testid="stTextInput"] {{
-      background: #FFFFFF;
-      border: 1px solid #E2E8F0;
-      border-radius: 16px;
-      padding: 14px 14px 10px 14px;
-      box-shadow: 0 6px 18px rgba(2, 6, 23, 0.06);
-    }}
-
-    div[data-testid="stDateInput"] label,
-    div[data-testid="stSelectbox"] label,
-    div[data-testid="stTimeInput"] label,
-    div[data-testid="stTextInput"] label {{
-      margin-bottom: 8px !important;
-      font-weight: 600 !important;
-      color: #1A202C !important;
-    }}
-
-    div[data-testid="stSelectbox"] > div,
-    div[data-testid="stDateInput"] > div {{
-      padding-top: 0 !important;
     }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
 # =========================
-# Componentes de UI
+# Helpers
+# =========================
+_WEEKDAYS_PT = {
+    0: "SEGUNDA-FEIRA",
+    1: "TERÇA-FEIRA",
+    2: "QUARTA-FEIRA",
+    3: "QUINTA-FEIRA",
+    4: "SEXTA-FEIRA",
+    5: "SÁBADO",
+    6: "DOMINGO",
+}
+
+def week_bounds(ref: date):
+    monday = ref - timedelta(days=ref.weekday())
+    sunday = monday + timedelta(days=6)
+    return monday, sunday
+
+def _fmt_date_br(d: date) -> str:
+    return d.strftime("%d/%m/%Y")
+
+def _fmt_time_hhmm(t) -> str:
+    try:
+        return str(t)[:5]
+    except Exception:
+        return ""
+
+def join_people(*args):
+    return ", ".join([a for a in args if a])
+
+def _weekday_label(d: date) -> str:
+    try:
+        return _WEEKDAYS_PT.get(d.weekday(), "")
+    except Exception:
+        return ""
+
+def df_to_pdf_bytes_a4(df: pd.DataFrame, title: str, subtitle: str):
+    if df is None or df.empty:
+        return None
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=28,
+        rightMargin=28,
+        topMargin=28,
+        bottomMargin=28
+    )
+
+    styles = getSampleStyleSheet()
+    story = []
+
+    story.append(Paragraph(title, styles["Title"]))
+    story.append(Paragraph(subtitle, styles["Normal"]))
+    story.append(Spacer(1, 12))
+
+    safe = df.fillna("").astype(str)
+
+    data = [list(safe.columns)] + safe.values.tolist()
+
+    table = Table(data, repeatRows=1, hAlign="LEFT")
+    table_style = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(COLORS["primary"])),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
+        ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("TEXTCOLOR", (0, 1), (-1, -1), colors.black),
+
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CBD5E1")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ])
+
+    table.setStyle(table_style)
+    story.append(table)
+
+    doc.build(story)
+    pdf = buf.getvalue()
+    buf.close()
+    return pdf
+
+# =========================
+# UI
 # =========================
 def render_topbar():
     st.markdown(
@@ -336,8 +408,17 @@ def render_topbar():
         unsafe_allow_html=True
     )
 
+def init_state():
+    st.session_state.setdefault("auth_ok", False)
+    st.session_state.setdefault("user", None)
+    st.session_state.setdefault("page", "Agenda Pública")
+    st.session_state.setdefault("edit_id", None)
+
+    st.session_state.setdefault("show_dirigentes_extra", False)
+    st.session_state.setdefault("show_portaria_extra", False)
+    st.session_state.setdefault("show_recepcao_extra", False)
+
 def render_page_tabs():
-    """Renderiza as abas de página no topo"""
     if not st.session_state.auth_ok:
         pages = [
             {"id": "Agenda Pública", "label": "📅 Agenda Pública"},
@@ -362,41 +443,11 @@ def render_page_tabs():
                 st.session_state.page = page["id"]
                 st.rerun()
 
-# =========================
-# Estado inicial
-# =========================
-def init_state():
-    st.session_state.setdefault("auth_ok", False)
-    st.session_state.setdefault("user", None)
-    st.session_state.setdefault("page", "Agenda Pública")
-    st.session_state.setdefault("edit_id", None)
-
-    st.session_state.setdefault("show_dirigentes_extra", False)
-    st.session_state.setdefault("show_portaria_extra", False)
-    st.session_state.setdefault("show_recepcao_extra", False)
-
-# =========================
-# Utilidades
-# =========================
-def week_bounds(ref: date):
-    monday = ref - timedelta(days=ref.weekday())
-    sunday = monday + timedelta(days=6)
-    return monday, sunday
-
-def _fmt_date_br(d: date) -> str:
-    return d.strftime("%d/%m/%Y")
-
-def _fmt_time_hhmm(t) -> str:
-    try:
-        return str(t)[:5]
-    except Exception:
-        return ""
-
-def join_people(*args):
-    return ", ".join([a for a in args if a])
-
 def _event_card(ev: dict):
-    data_txt = _fmt_date_br(pd.to_datetime(ev["data"]).date() if ev.get("data") else date.today())
+    d = pd.to_datetime(ev["data"]).date() if ev.get("data") else date.today()
+    weekday_txt = _weekday_label(d)
+
+    data_txt = _fmt_date_br(d)
     hora_txt = _fmt_time_hhmm(ev.get("horario"))
     congreg = ev.get("congregacao") or ""
 
@@ -419,9 +470,11 @@ def _event_card(ev: dict):
     st.markdown(
         f"""
         <div class="event-card">
+          <div class="weekday-pill">{weekday_txt}</div>
+
           <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px;">
             <div style="min-width:0;">
-              <div style="font-weight: 700; font-size: 1.1rem; color: {COLORS['primary']};">{tipo_txt}</div>
+              <div style="font-weight: 800; font-size: 1.1rem; color: {COLORS['primary']};">{tipo_txt}</div>
               <div style="font-size: 0.9rem; color: {COLORS['text_light']}; margin-top: 4px;">
                 📅 {data_txt} • 🕒 {hora_txt} • 🏛️ {congreg}
               </div>
@@ -433,15 +486,15 @@ def _event_card(ev: dict):
 
           <div style="margin: 12px 0;">
             <div style="font-size: 0.95rem; margin-bottom: 4px;">
-              <span style="font-weight: 600; color: {COLORS['secondary']};">👤 Dirigentes:</span>
+              <span style="font-weight: 700; color: {COLORS['secondary']};">👤 Dirigentes</span>
               <span style="color: {COLORS['text']}; margin-left: 8px;">{dirigentes or "Não informado"}</span>
             </div>
             <div style="font-size: 0.95rem; margin-bottom: 4px;">
-              <span style="font-weight: 600; color: {COLORS['secondary']};">🚪 Portaria:</span>
+              <span style="font-weight: 700; color: {COLORS['secondary']};">🚪 Portaria</span>
               <span style="color: {COLORS['text']}; margin-left: 8px;">{portaria or "Não informado"}</span>
             </div>
             <div style="font-size: 0.95rem;">
-              <span style="font-weight: 600; color: {COLORS['secondary']};">🤝 Recepção:</span>
+              <span style="font-weight: 700; color: {COLORS['secondary']};">🤝 Recepção</span>
               <span style="color: {COLORS['text']}; margin-left: 8px;">{recepcao or "Não informado"}</span>
             </div>
           </div>
@@ -451,7 +504,7 @@ def _event_card(ev: dict):
     )
 
 # =========================
-# Sidebar Colapsada
+# Sidebar
 # =========================
 def sidebar():
     with st.sidebar:
@@ -575,7 +628,6 @@ def page_agenda_publica():
         unsafe_allow_html=True
     )
 
-    # FIX: sem wrappers HTML, o CSS acima deixa os widgets "em card"
     col1, col2, col3 = st.columns([1.2, 1, 0.8])
     with col1:
         ref = st.date_input("📆 Semana de referência", value=date.today(), format="DD/MM/YYYY")
@@ -619,43 +671,53 @@ def page_agenda_publica():
     df["horario_txt"] = df["horario"].astype(str).str[:5]
     df = df.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
 
-    tab_culto, tab_ebd, tab_oracao, tab_ensaio = st.tabs(["🎵 Cultos", "📚 EBD", "🙏 Oração", "🎤 Ensaios"])
+    # NOVO: aba "Todos"
+    tab_todos, tab_culto, tab_ebd, tab_oracao, tab_ensaio = st.tabs(
+        ["📌 Todos", "🎵 Cultos", "📚 EBD", "🙏 Oração", "🎤 Ensaios"]
+    )
+
+    def make_table_view(subdf: pd.DataFrame) -> pd.DataFrame:
+        view = subdf.copy()
+        view["Dia"] = view["data"].apply(lambda x: _weekday_label(x))
+        view["Data"] = view["data"].apply(lambda x: x.strftime("%d/%m/%Y"))
+        view["Horário"] = view["horario_txt"]
+        view["Tipo"] = view.apply(lambda r: format_tipo(r.to_dict()), axis=1)
+
+        view["Dirigentes"] = view.apply(
+            lambda r: join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3")), axis=1
+        )
+        view["Portaria"] = view.apply(
+            lambda r: join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3")), axis=1
+        )
+        view["Recepção"] = view.apply(
+            lambda r: join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3")), axis=1
+        )
+
+        show = view[["Dia", "Data", "Horário", "congregacao", "Tipo", "Dirigentes", "Portaria", "Recepção", "secretaria"]]
+        show = show.rename(columns={"congregacao": "Congregação", "secretaria": "Secretaria"})
+        return show
 
     def render_group(tipo_nome: str, container, icon: str):
         with container:
-            sub = df[df["tipo"] == tipo_nome].copy()
+            sub = df if tipo_nome == "Todos" else df[df["tipo"] == tipo_nome].copy()
+
             if sub.empty:
                 st.info(f"{icon} Sem eventos deste tipo nesta semana.")
                 return
 
+            # Tabela (com export PNG/CSV) e Cards
             if modo == "Tabela":
-                view = sub.copy()
-                view["Data"] = view["data"].apply(lambda x: x.strftime("%d/%m/%Y"))
-                view["Horário"] = view["horario_txt"]
-                view["Tipo"] = view.apply(lambda r: format_tipo(r.to_dict()), axis=1)
-
-                view["Dirigentes"] = view.apply(
-                    lambda r: join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3")), axis=1
-                )
-                view["Portaria"] = view.apply(
-                    lambda r: join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3")), axis=1
-                )
-                view["Recepção"] = view.apply(
-                    lambda r: join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3")), axis=1
-                )
-
-                show = view[["Data", "Horário", "congregacao", "Tipo", "Dirigentes", "Portaria", "Recepção", "secretaria"]]
-                show = show.rename(columns={"congregacao": "Congregação", "secretaria": "Secretaria"})
-
+                show = make_table_view(sub)
                 st.dataframe(show, use_container_width=True, hide_index=True)
 
+                # Export PNG e CSV
                 png = df_to_png_bytes(
                     show,
                     title=f"{tipo_nome} • {_fmt_date_br(monday)} a {_fmt_date_br(sunday)}"
                 )
-                if png:
-                    colx, coly = st.columns(2)
-                    with colx:
+                colx, coly, colz = st.columns(3)
+                with colx:
+                    if png:
                         st.download_button(
                             "💾 Exportar em PNG",
                             data=png,
@@ -663,19 +725,39 @@ def page_agenda_publica():
                             mime="image/png",
                             use_container_width=True
                         )
-                    with coly:
+                with coly:
+                    st.download_button(
+                        "📄 Exportar em CSV",
+                        data=show.to_csv(index=False).encode("utf-8"),
+                        file_name=f"agenda_{tipo_nome.lower()}_{monday.strftime('%Y%m%d')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+
+                # NOVO: PDF A4 (principalmente na aba Todos)
+                pdf_df = show.copy()
+                # deixa mais enxuto para caber melhor em A4
+                pdf_df = pdf_df.rename(columns={"Dirigentes": "Dirig.", "Recepção": "Recep."})
+                title = "Agenda da Semana (A4)"
+                subtitle = f"{IGREJA_NOME}<br/>{_fmt_date_br(monday)} até {_fmt_date_br(sunday)}<br/>Congregação: {congregacao}"
+                pdf_bytes = df_to_pdf_bytes_a4(pdf_df, title=title, subtitle=subtitle)
+                with colz:
+                    if pdf_bytes:
                         st.download_button(
-                            "📄 Exportar em CSV",
-                            data=show.to_csv(index=False).encode("utf-8"),
-                            file_name=f"agenda_{tipo_nome.lower()}_{monday.strftime('%Y%m%d')}.csv",
-                            mime="text/csv",
+                            "🧾 Baixar em PDF (A4)",
+                            data=pdf_bytes,
+                            file_name=f"agenda_a4_{monday.strftime('%Y%m%d')}.pdf",
+                            mime="application/pdf",
                             use_container_width=True
                         )
                 return
 
+            # Cards
             for _, r in sub.iterrows():
                 _event_card(r.to_dict())
 
+    # Aba Todos
+    render_group("Todos", tab_todos, "📌")
     render_group("Culto", tab_culto, "🎵")
     render_group("EBD", tab_ebd, "📚")
     render_group("Oração", tab_oracao, "🙏")
