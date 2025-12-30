@@ -1,4 +1,4 @@
-# agenda_igreja/auth.py
+# -agenda_igreja/auth.py
 import hashlib
 import streamlit as st
 from agenda_igreja.db import get_db_connection
