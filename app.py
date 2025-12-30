@@ -1,4 +1,12 @@
 # app.py
+import os
+import sys
+
+# Garante que o diretório do projeto esteja no PYTHONPATH (Docker/Railway)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime, timedelta
