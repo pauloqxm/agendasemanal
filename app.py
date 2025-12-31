@@ -17,6 +17,8 @@ from reportlab.platypus import (
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
+from reportlab.platypus import Image as RLImage
+from urllib.request import urlopen
 
 from agenda_igreja.db import test_db_connection
 from agenda_igreja.auth import (
@@ -393,10 +395,33 @@ def df_to_pdf_bytes_a4(df: pd.DataFrame, title: str, subtitle: str):
 def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date, congregacao_txt: str):
     """
     Gera PDF A4 no estilo "rodízio semanal", agrupando por dia da semana e listando os eventos daquele dia.
-    Funciona especificamente para a aba "Todos" na Agenda Pública.
+    Agora com LOGO no topo e destaque colorido para Culto, EBD, Ensaio e Oração.
     """
     if subdf is None or subdf.empty:
         return None
+
+    def _try_fetch_logo_bytes(url: str):
+        try:
+            with urlopen(url, timeout=8) as r:
+                return r.read()
+        except Exception:
+            return None
+
+    def _highlight_tipos(text: str) -> str:
+        if not text:
+            return ""
+        # ReportLab Paragraph aceita tags simples tipo <font color="...">...</font>
+        # A ordem importa para evitar substituições estranhas
+        mapping = [
+            ("Culto", COLORS["light"]),
+            ("EBD", COLORS["success"]),
+            ("Ensaio", COLORS["warning"]),
+            ("Oração", COLORS["accent"]),
+        ]
+        out = text
+        for palavra, cor in mapping:
+            out = out.replace(palavra, f'<font color="{cor}"><b>{palavra}</b></font>')
+        return out
 
     dfp = subdf.copy()
 
@@ -411,7 +436,7 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
         pagesize=A4,
         leftMargin=2.0 * cm,
         rightMargin=2.0 * cm,
-        topMargin=1.6 * cm,
+        topMargin=1.4 * cm,
         bottomMargin=1.6 * cm,
         title="Rodízio Semanal"
     )
@@ -425,7 +450,7 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             fontSize=16,
             leading=18,
             textColor=colors.HexColor(COLORS["primary"]),
-            spaceAfter=10,
+            spaceAfter=6,
             alignment=1
         ),
         "h_sub": ParagraphStyle(
@@ -436,7 +461,7 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             leading=12,
             textColor=colors.HexColor(COLORS["secondary"]),
             alignment=1,
-            spaceAfter=12
+            spaceAfter=8
         ),
         "small_center": ParagraphStyle(
             "small_center",
@@ -446,7 +471,7 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             leading=11,
             textColor=colors.HexColor("#334155"),
             alignment=1,
-            spaceAfter=10
+            spaceAfter=6
         ),
         "day_title": ParagraphStyle(
             "day_title",
@@ -455,7 +480,7 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             fontSize=11,
             leading=14,
             textColor=colors.HexColor(COLORS["primary"]),
-            spaceBefore=6,
+            spaceBefore=8,
             spaceAfter=6
         ),
         "ev_line": ParagraphStyle(
@@ -466,7 +491,7 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             leading=12,
             textColor=colors.HexColor("#0f172a"),
             leftIndent=12,
-            spaceAfter=4
+            spaceAfter=3
         ),
         "ev_meta": ParagraphStyle(
             "ev_meta",
@@ -476,17 +501,33 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             leading=11,
             textColor=colors.HexColor("#334155"),
             leftIndent=22,
-            spaceAfter=3
+            spaceAfter=2
         ),
     }
 
     story = []
+
+    # LOGO no topo
+    logo_bytes = _try_fetch_logo_bytes(LOGO_URL)
+    if logo_bytes:
+        try:
+            img = RLImage(io.BytesIO(logo_bytes))
+            img.drawHeight = 2.2 * cm
+            img.drawWidth = 2.2 * cm
+            img.hAlign = "CENTER"
+            story.append(img)
+            story.append(Spacer(1, 6))
+        except Exception:
+            pass
+
     story.append(Paragraph("RODÍZIO SEMANAL", styles["h_title"]))
     story.append(Paragraph(f"PERÍODO DE {_fmt_date_br(monday)} A {_fmt_date_br(sunday)}", styles["h_sub"]))
     story.append(Paragraph(IGREJA_NOME, styles["small_center"]))
+
     if congregacao_txt:
         story.append(Paragraph(f"Congregação: {congregacao_txt}", styles["small_center"]))
-    story.append(Spacer(1, 6))
+
+    story.append(Spacer(1, 8))
 
     # agrupa por data
     for d, g in dfp.groupby("data", sort=True):
@@ -497,11 +538,12 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
         for _, r in g.iterrows():
             hora = (r.get("horario_txt") or "").strip()
             tipo_txt = format_tipo(r.to_dict())
+            tipo_txt = _highlight_tipos(tipo_txt)  # destaque aqui
             congreg = (r.get("congregacao") or "").strip()
 
-            linha = f"• {hora}  {tipo_txt}"
+            linha = f"• <b>{hora}</b>  {tipo_txt}"
             if congreg:
-                linha += f"  ({congreg})"
+                linha += f'  <font color="#475569">({congreg})</font>'
             blocks.append(Paragraph(linha, styles["ev_line"]))
 
             dirigentes = join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3"))
@@ -509,15 +551,15 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             recepcao = join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3"))
 
             if dirigentes:
-                blocks.append(Paragraph(f"Dirigentes: {dirigentes}", styles["ev_meta"]))
+                blocks.append(Paragraph(f"<b>Dirigentes</b>: {dirigentes}", styles["ev_meta"]))
             if portaria:
-                blocks.append(Paragraph(f"Portaria: {portaria}", styles["ev_meta"]))
+                blocks.append(Paragraph(f"<b>Portaria</b>: {portaria}", styles["ev_meta"]))
             if recepcao:
-                blocks.append(Paragraph(f"Recepção: {recepcao}", styles["ev_meta"]))
+                blocks.append(Paragraph(f"<b>Recepção</b>: {recepcao}", styles["ev_meta"]))
 
             sec = (r.get("secretaria") or "").strip()
             if sec:
-                blocks.append(Paragraph(f"Secretaria: {sec}", styles["ev_meta"]))
+                blocks.append(Paragraph(f"<b>Secretaria</b>: {sec}", styles["ev_meta"]))
 
         story.append(KeepTogether(blocks))
         story.append(Spacer(1, 6))
@@ -526,6 +568,7 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
     pdf = buf.getvalue()
     buf.close()
     return pdf
+
 
 # =========================
 # UI
