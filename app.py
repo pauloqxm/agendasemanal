@@ -1086,15 +1086,19 @@ def page_agenda_publica():
                 return
 
             # Botão PDF rodízio na aba Todos
+                        # NOVO: botões PDF + PNG (aba Todos)
             if tipo_nome == "Todos":
-                pdf_rodizio = agenda_todos_to_pdf_rodizio(
+                pdf_rodizio, png_rodizio = agenda_todos_to_pdf_rodizio(
                     subdf=sub,
                     monday=monday,
                     sunday=sunday,
-                    congregacao_txt=congregacao
+                    congregacao_txt=congregacao,
+                    return_png=True
                 )
-                col_pdf1, col_pdf2 = st.columns([1, 2])
-                with col_pdf1:
+
+                col_pdf, col_png, col_info = st.columns([1, 1, 2])
+
+                with col_pdf:
                     if pdf_rodizio:
                         st.download_button(
                             "🧾 Baixar PDF Rodízio (A4)",
@@ -1103,8 +1107,23 @@ def page_agenda_publica():
                             mime="application/pdf",
                             use_container_width=True
                         )
-                with col_pdf2:
-                    st.caption("Esse PDF sai no formato A4 estilo rodízio semanal, igual o modelo do anexo.")
+
+                with col_png:
+                    if png_rodizio:
+                        st.download_button(
+                            "🖼️ Baixar PNG Rodízio",
+                            data=png_rodizio,
+                            file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.png",
+                            mime="image/png",
+                            use_container_width=True
+                        )
+                    else:
+                        st.caption("PNG depende do pacote PyMuPDF.")
+                        st.code("pip install pymupdf", language="bash")
+
+                with col_info:
+                    st.caption("Esse PDF e PNG saem no formato A4 estilo rodízio semanal, igual ao modelo.")
+
 
             if modo == "Tabela":
                 show = make_table_view(sub)
