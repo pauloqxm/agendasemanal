@@ -401,29 +401,10 @@ def df_to_pdf_bytes_a4(df: pd.DataFrame, title: str, subtitle: str):
 # =========================
 # NOVO: PDF "Rodízio Semanal" (igual referência do anexo)
 # =========================
-def agenda_todos_to_pdf_rodizio(
-    subdf: pd.DataFrame,
-    monday: date,
-    sunday: date,
-    congregacao_txt: str,
-    return_png: bool = False
-):
-    """
-    Retorna:
-      - se return_png=False: pdf_bytes
-      - se return_png=True: (pdf_bytes, png_bytes)  # png é a 1ª página do pdf
-    """
-
+def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date, congregacao_txt: str):
     if subdf is None or subdf.empty:
-        return (None, None) if return_png else None
+        return None
 
-    from urllib.request import urlopen
-    from reportlab.platypus import Image as RLImage
-    from reportlab.lib.units import cm
-
-    # -------------------------
-    # Helpers internos
-    # -------------------------
     def _try_fetch_logo_bytes(url: str):
         try:
             with urlopen(url, timeout=8) as r:
@@ -435,7 +416,6 @@ def agenda_todos_to_pdf_rodizio(
         t = (row.get("tipo") or "").strip()
         if t:
             return t
-
         txt = (format_tipo(row) or "").strip()
         for cand in ["Culto", "EBD", "Ensaio", "Oração"]:
             if cand in txt:
@@ -446,8 +426,7 @@ def agenda_todos_to_pdf_rodizio(
         hora = (str(row.get("horario"))[:5] if row.get("horario") else "").strip()
         tipo_txt = (format_tipo(row) or "").strip()
         congreg = (row.get("congregacao") or "").strip()
-
-        line = f"• {hora} {tipo_txt}".strip()
+        line = f"• {hora} {tipo_txt}"
         if congreg:
             line += f" ({congreg})"
         return line
@@ -458,38 +437,13 @@ def agenda_todos_to_pdf_rodizio(
             return ""
         return f"{label}: {val}"
 
-    def _pdf_first_page_to_png(pdf_bytes: bytes):
-        """
-        Converte a 1ª página do PDF em PNG.
-        Preferência: PyMuPDF (fitz). Se não tiver, retorna None.
-        """
-        try:
-            import fitz  # PyMuPDF
-        except Exception:
-            return None
-
-        try:
-            docx = fitz.open(stream=pdf_bytes, filetype="pdf")
-            page = docx.load_page(0)
-            # escala 2x pra ficar mais nítido
-            mat = fitz.Matrix(2, 2)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            return pix.tobytes("png")
-        except Exception:
-            return None
-
-    # -------------------------
     # Normaliza DF
-    # -------------------------
     dfp = subdf.copy()
     dfp["data"] = pd.to_datetime(dfp["data"]).dt.date
     dfp["horario_txt"] = dfp["horario"].astype(str).str[:5]
     dfp["categoria"] = dfp.apply(lambda r: _cat_from_tipo(r.to_dict()), axis=1)
     dfp = dfp.sort_values(["categoria", "data", "horario_txt", "congregacao"], ascending=True)
 
-    # -------------------------
-    # PDF (ReportLab)
-    # -------------------------
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
@@ -502,7 +456,6 @@ def agenda_todos_to_pdf_rodizio(
     )
 
     base = getSampleStyleSheet()
-
     styles = {
         "h_title": ParagraphStyle(
             "h_title",
@@ -611,19 +564,15 @@ def agenda_todos_to_pdf_rodizio(
         title = cat_name.upper()
 
         w = A4[0] - (doc.leftMargin + doc.rightMargin)
-
-        tbl = Table([[Paragraph(
-            title,
-            ParagraphStyle(
-                f"cat_{title}",
-                parent=base["Normal"],
-                fontName="Helvetica-Bold",
-                fontSize=13.5,
-                leading=16,
-                textColor=colors.HexColor(COLORS["primary"]),
-                leftIndent=0
-            )
-        )]], colWidths=[w])
+        tbl = Table([[Paragraph(title, ParagraphStyle(
+            f"cat_{title}",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=13.5,
+            leading=16,
+            textColor=colors.HexColor(COLORS["primary"]),
+            leftIndent=4
+        ))]], colWidths=[w])
 
         tbl.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), bg),
@@ -635,7 +584,6 @@ def agenda_todos_to_pdf_rodizio(
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ]))
 
-        # linha colorida abaixo
         line_tbl = Table([[""]], colWidths=[w], rowHeights=[2])
         line_tbl.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), ln),
@@ -647,22 +595,21 @@ def agenda_todos_to_pdf_rodizio(
 
         return [Spacer(1, 8), tbl, line_tbl, Spacer(1, 8)]
 
-    def build_category_block(cat: str):
+    for cat in categories:
         df_cat = dfp[dfp["categoria"] == cat].copy()
         if df_cat.empty:
-            return []
+            continue
 
-        block = []
-        block.extend(_cat_header(cat))
+        story.extend(_cat_header(cat))
 
         for d, g in df_cat.groupby("data", sort=True):
             weekday = _weekday_label(d)
             header = f"{weekday}  {_fmt_date_br(d)}"
+
             blocks = [Paragraph(header, styles["day_title"])]
 
             for _, r in g.iterrows():
                 row = r.to_dict()
-
                 blocks.append(Paragraph(_fmt_dt_line(row), styles["ev_line"]))
 
                 dirigentes = _people_line("Dirigentes", row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3"))
@@ -678,66 +625,24 @@ def agenda_todos_to_pdf_rodizio(
 
                 sec = (row.get("secretaria") or "").strip()
                 if sec:
-                    blocks.append(Paragraph(f"Secretaria: {sec}", styles["ev_meta"]))
+                    blocks.append(Paragraph(f"Secretaria: {_html_escape(sec)}", styles["ev_meta"]))
 
+                # ✅ NOVO: Observações no PDF
                 obs = (row.get("observacoes") or "").strip()
                 if obs:
-                    blocks.append(Paragraph(f"Observações: {obs}", styles["ev_meta"]))
+                    obs_pdf = _html_escape(obs).replace("\n", "<br/>")
+                    blocks.append(Paragraph(f"<b>Observações</b>: {obs_pdf}", styles["ev_meta"]))
 
                 blocks.append(Spacer(1, 4))
 
-            block.append(KeepTogether(blocks))
+            story.append(KeepTogether(blocks))
 
-        block.append(Spacer(1, 8))
-        return block
-
-    # monta blocos por categoria
-    cat_blocks = [(cat, build_category_block(cat)) for cat in categories]
-    cat_blocks = [(c, b) for c, b in cat_blocks if b]
-
-    # distribui em 2 colunas alternando
-    left_flow = []
-    right_flow = []
-    toggle = True
-    for _, block in cat_blocks:
-        if toggle:
-            left_flow.extend(block)
-        else:
-            right_flow.extend(block)
-        toggle = not toggle
-
-    w = A4[0] - (doc.leftMargin + doc.rightMargin)
-    col_w = (w - 10) / 2  # respiro
-
-    two_col = Table(
-        [[left_flow, right_flow]],
-        colWidths=[col_w, col_w],
-        hAlign="LEFT"
-    )
-
-    two_col.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LINEBEFORE", (1, 0), (1, 0), 1.0, colors.HexColor("#CBD5E1")),
-        ("LEFTPADDING", (0, 0), (0, 0), 0),
-        ("RIGHTPADDING", (0, 0), (0, 0), 10),
-        ("LEFTPADDING", (1, 0), (1, 0), 10),
-        ("RIGHTPADDING", (1, 0), (1, 0), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-
-    story.append(two_col)
+        story.append(Spacer(1, 10))
 
     doc.build(story)
-    pdf_bytes = buf.getvalue()
+    pdf = buf.getvalue()
     buf.close()
-
-    if not return_png:
-        return pdf_bytes
-
-    png_bytes = _pdf_first_page_to_png(pdf_bytes)
-    return pdf_bytes, png_bytes
-
+    return pdf
 
 # =========================
 # UI
@@ -1086,19 +991,15 @@ def page_agenda_publica():
                 return
 
             # Botão PDF rodízio na aba Todos
-                        # NOVO: botões PDF + PNG (aba Todos)
             if tipo_nome == "Todos":
-                pdf_rodizio, png_rodizio = agenda_todos_to_pdf_rodizio(
+                pdf_rodizio = agenda_todos_to_pdf_rodizio(
                     subdf=sub,
                     monday=monday,
                     sunday=sunday,
-                    congregacao_txt=congregacao,
-                    return_png=True
+                    congregacao_txt=congregacao
                 )
-
-                col_pdf, col_png, col_info = st.columns([1, 1, 2])
-
-                with col_pdf:
+                col_pdf1, col_pdf2 = st.columns([1, 2])
+                with col_pdf1:
                     if pdf_rodizio:
                         st.download_button(
                             "🧾 Baixar PDF Rodízio (A4)",
@@ -1107,23 +1008,8 @@ def page_agenda_publica():
                             mime="application/pdf",
                             use_container_width=True
                         )
-
-                with col_png:
-                    if png_rodizio:
-                        st.download_button(
-                            "🖼️ Baixar PNG Rodízio",
-                            data=png_rodizio,
-                            file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.png",
-                            mime="image/png",
-                            use_container_width=True
-                        )
-                    else:
-                        st.caption("PNG depende do pacote PyMuPDF.")
-                        st.code("pip install pymupdf", language="bash")
-
-                with col_info:
-                    st.caption("Esse PDF e PNG saem no formato A4 estilo rodízio semanal, igual ao modelo.")
-
+                with col_pdf2:
+                    st.caption("Esse PDF sai no formato A4 estilo rodízio semanal, igual o modelo do anexo.")
 
             if modo == "Tabela":
                 show = make_table_view(sub)
