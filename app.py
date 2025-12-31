@@ -1075,7 +1075,7 @@ def page_agenda_publica():
                 with c1:
                     if pdf_rodizio:
                         st.download_button(
-                            "🧾 Baixar PDF Rodízio (A4)",
+                            "🧾 Baixar PDF",
                             data=pdf_rodizio,
                             file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.pdf",
                             mime="application/pdf",
@@ -1085,7 +1085,7 @@ def page_agenda_publica():
                 with c2:
                     if png_rodizio:
                         st.download_button(
-                            "🖼️ Baixar PNG Rodízio",
+                            "🖼️ Baixar PNG",
                             data=png_rodizio,
                             file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.png",
                             mime="image/png",
@@ -1096,7 +1096,7 @@ def page_agenda_publica():
                         st.code("pip install pymupdf", language="bash")
             
                 with c3:
-                    st.caption("PDF e PNG saem no formato A4 do rodízio, agora em duas colunas com linha no meio.")
+                    st.caption("Escolha um formado, PDF ou PNG, e baixe")
 
             if modo == "Tabela":
                 show = make_table_view(sub)
