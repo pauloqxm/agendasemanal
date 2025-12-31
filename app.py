@@ -1737,13 +1737,6 @@ def main():
 if __name__ == "__main__":
     main()
 
-# Botão topo
-st.markdown("""
-<div class="top-btn-container">
-    <a href="#top" class="top-btn">↑</a>
-</div>
-""", unsafe_allow_html=True)
-
 # Rodapé
 st.markdown("---")
 
