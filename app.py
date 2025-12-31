@@ -393,12 +393,12 @@ def df_to_pdf_bytes_a4(df: pd.DataFrame, title: str, subtitle: str):
 # NOVO: PDF "Rodízio Semanal" (igual referência do anexo)
 # =========================
 def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date, congregacao_txt: str):
-    """
-    Gera PDF A4 no estilo "rodízio semanal", agrupando por dia da semana e listando os eventos daquele dia.
-    Agora com LOGO no topo e destaque colorido para Culto, EBD, Ensaio e Oração.
-    """
     if subdf is None or subdf.empty:
         return None
+
+    from urllib.request import urlopen
+    from reportlab.platypus import Image as RLImage
+    from reportlab.lib.units import cm
 
     def _try_fetch_logo_bytes(url: str):
         try:
@@ -407,28 +407,38 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
         except Exception:
             return None
 
-    def _highlight_tipos(text: str) -> str:
-        if not text:
+    def _cat_from_tipo(row: dict) -> str:
+        # Prioriza o campo "tipo" do banco. Se não tiver, tenta inferir pelo texto formatado.
+        t = (row.get("tipo") or "").strip()
+        if t:
+            return t
+        txt = (format_tipo(row) or "").strip()
+        for cand in ["Culto", "EBD", "Ensaio", "Oração"]:
+            if cand in txt:
+                return cand
+        return "Outros"
+
+    def _fmt_dt_line(row: dict) -> str:
+        hora = (str(row.get("horario"))[:5] if row.get("horario") else "").strip()
+        tipo_txt = (format_tipo(row) or "").strip()
+        congreg = (row.get("congregacao") or "").strip()
+        line = f"• {hora} {tipo_txt}"
+        if congreg:
+            line += f" ({congreg})"
+        return line
+
+    def _people_line(label: str, *names) -> str:
+        val = join_people(*names)
+        if not val:
             return ""
-        # ReportLab Paragraph aceita tags simples tipo <font color="...">...</font>
-        # A ordem importa para evitar substituições estranhas
-        mapping = [
-            ("Culto", COLORS["light"]),
-            ("EBD", COLORS["success"]),
-            ("Ensaio", COLORS["warning"]),
-            ("Oração", COLORS["accent"]),
-        ]
-        out = text
-        for palavra, cor in mapping:
-            out = out.replace(palavra, f'<font color="{cor}"><b>{palavra}</b></font>')
-        return out
+        return f"{label}: {val}"
 
+    # Normaliza DF
     dfp = subdf.copy()
-
-    # normaliza
     dfp["data"] = pd.to_datetime(dfp["data"]).dt.date
     dfp["horario_txt"] = dfp["horario"].astype(str).str[:5]
-    dfp = dfp.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
+    dfp["categoria"] = dfp.apply(lambda r: _cat_from_tipo(r.to_dict()), axis=1)
+    dfp = dfp.sort_values(["categoria", "data", "horario_txt", "congregacao"], ascending=True)
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -473,14 +483,24 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             alignment=1,
             spaceAfter=6
         ),
+        "cat_title": ParagraphStyle(
+            "cat_title",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=13,
+            leading=16,
+            textColor=colors.HexColor(COLORS["accent"]),
+            spaceBefore=10,
+            spaceAfter=8
+        ),
         "day_title": ParagraphStyle(
             "day_title",
             parent=base["Normal"],
             fontName="Helvetica-Bold",
-            fontSize=11,
+            fontSize=10.5,
             leading=14,
             textColor=colors.HexColor(COLORS["primary"]),
-            spaceBefore=8,
+            spaceBefore=6,
             spaceAfter=6
         ),
         "ev_line": ParagraphStyle(
@@ -490,7 +510,7 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             fontSize=9.5,
             leading=12,
             textColor=colors.HexColor("#0f172a"),
-            leftIndent=12,
+            leftIndent=10,
             spaceAfter=3
         ),
         "ev_meta": ParagraphStyle(
@@ -500,14 +520,21 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             fontSize=9,
             leading=11,
             textColor=colors.HexColor("#334155"),
-            leftIndent=22,
+            leftIndent=18,
             spaceAfter=2
         ),
+        "spacer": ParagraphStyle(
+            "spacer",
+            parent=base["Normal"],
+            fontSize=6,
+            leading=8,
+            spaceAfter=6
+        )
     }
 
     story = []
 
-    # LOGO no topo
+    # Logo topo
     logo_bytes = _try_fetch_logo_bytes(LOGO_URL)
     if logo_bytes:
         try:
@@ -523,51 +550,61 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
     story.append(Paragraph("RODÍZIO SEMANAL", styles["h_title"]))
     story.append(Paragraph(f"PERÍODO DE {_fmt_date_br(monday)} A {_fmt_date_br(sunday)}", styles["h_sub"]))
     story.append(Paragraph(IGREJA_NOME, styles["small_center"]))
-
     if congregacao_txt:
         story.append(Paragraph(f"Congregação: {congregacao_txt}", styles["small_center"]))
-
     story.append(Spacer(1, 8))
 
-    # agrupa por data
-    for d, g in dfp.groupby("data", sort=True):
-        weekday = _weekday_label(d)
-        header = f"{weekday}  {_fmt_date_br(d)}"
-        blocks = [Paragraph(header, styles["day_title"])]
+    # Ordem fixa das categorias (igual tua ideia)
+    order = ["Culto", "Ensaio", "Oração", "EBD"]
+    found = [c for c in order if c in set(dfp["categoria"].tolist())]
+    extras = sorted([c for c in dfp["categoria"].unique().tolist() if c not in found])
+    categories = found + extras
 
-        for _, r in g.iterrows():
-            hora = (r.get("horario_txt") or "").strip()
-            tipo_txt = format_tipo(r.to_dict())
-            tipo_txt = _highlight_tipos(tipo_txt)  # destaque aqui
-            congreg = (r.get("congregacao") or "").strip()
+    for cat in categories:
+        df_cat = dfp[dfp["categoria"] == cat].copy()
+        if df_cat.empty:
+            continue
 
-            linha = f"• <b>{hora}</b>  {tipo_txt}"
-            if congreg:
-                linha += f'  <font color="#475569">({congreg})</font>'
-            blocks.append(Paragraph(linha, styles["ev_line"]))
+        # Título da categoria
+        story.append(Paragraph(cat, styles["cat_title"]))
 
-            dirigentes = join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3"))
-            portaria = join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3"))
-            recepcao = join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3"))
+        # Agrupa por dia
+        for d, g in df_cat.groupby("data", sort=True):
+            weekday = _weekday_label(d)
+            header = f"{weekday}  {_fmt_date_br(d)}"
+            blocks = [Paragraph(header, styles["day_title"])]
 
-            if dirigentes:
-                blocks.append(Paragraph(f"<b>Dirigentes</b>: {dirigentes}", styles["ev_meta"]))
-            if portaria:
-                blocks.append(Paragraph(f"<b>Portaria</b>: {portaria}", styles["ev_meta"]))
-            if recepcao:
-                blocks.append(Paragraph(f"<b>Recepção</b>: {recepcao}", styles["ev_meta"]))
+            for _, r in g.iterrows():
+                row = r.to_dict()
 
-            sec = (r.get("secretaria") or "").strip()
-            if sec:
-                blocks.append(Paragraph(f"<b>Secretaria</b>: {sec}", styles["ev_meta"]))
+                blocks.append(Paragraph(_fmt_dt_line(row), styles["ev_line"]))
 
-        story.append(KeepTogether(blocks))
-        story.append(Spacer(1, 6))
+                dirigentes = _people_line("Dirigentes", row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3"))
+                portaria = _people_line("Portaria", row.get("portaria1"), row.get("portaria2"), row.get("portaria3"))
+                recepcao = _people_line("Recepção", row.get("recepcao1"), row.get("recepcao2"), row.get("recepcao3"))
+
+                if dirigentes:
+                    blocks.append(Paragraph(dirigentes, styles["ev_meta"]))
+                if portaria:
+                    blocks.append(Paragraph(portaria, styles["ev_meta"]))
+                if recepcao:
+                    blocks.append(Paragraph(recepcao, styles["ev_meta"]))
+
+                sec = (row.get("secretaria") or "").strip()
+                if sec:
+                    blocks.append(Paragraph(f"Secretaria: {sec}", styles["ev_meta"]))
+
+                blocks.append(Spacer(1, 4))
+
+            story.append(KeepTogether(blocks))
+
+        story.append(Spacer(1, 10))
 
     doc.build(story)
     pdf = buf.getvalue()
     buf.close()
     return pdf
+
 
 
 # =========================
