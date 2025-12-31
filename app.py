@@ -335,6 +335,16 @@ def _weekday_label(d: date) -> str:
     except Exception:
         return ""
 
+def _html_escape(s: str) -> str:
+    if s is None:
+        return ""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
 def df_to_pdf_bytes_a4(df: pd.DataFrame, title: str, subtitle: str):
     if df is None or df.empty:
         return None
@@ -357,7 +367,6 @@ def df_to_pdf_bytes_a4(df: pd.DataFrame, title: str, subtitle: str):
     story.append(Spacer(1, 12))
 
     safe = df.fillna("").astype(str)
-
     data = [list(safe.columns)] + safe.values.tolist()
 
     table = Table(data, repeatRows=1, hAlign="LEFT")
@@ -395,10 +404,6 @@ def df_to_pdf_bytes_a4(df: pd.DataFrame, title: str, subtitle: str):
 def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date, congregacao_txt: str):
     if subdf is None or subdf.empty:
         return None
-
-    from urllib.request import urlopen
-    from reportlab.platypus import Image as RLImage
-    from reportlab.lib.units import cm
 
     def _try_fetch_logo_bytes(url: str):
         try:
@@ -558,7 +563,6 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
 
         title = cat_name.upper()
 
-        # bloco com fundo
         w = A4[0] - (doc.leftMargin + doc.rightMargin)
         tbl = Table([[Paragraph(title, ParagraphStyle(
             f"cat_{title}",
@@ -580,7 +584,6 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ]))
 
-        # linha colorida logo abaixo
         line_tbl = Table([[""]], colWidths=[w], rowHeights=[2])
         line_tbl.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), ln),
@@ -597,10 +600,8 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
         if df_cat.empty:
             continue
 
-        # Título da categoria (com fundo + linha)
         story.extend(_cat_header(cat))
 
-        # Agrupa por dia
         for d, g in df_cat.groupby("data", sort=True):
             weekday = _weekday_label(d)
             header = f"{weekday}  {_fmt_date_br(d)}"
@@ -624,7 +625,13 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
 
                 sec = (row.get("secretaria") or "").strip()
                 if sec:
-                    blocks.append(Paragraph(f"Secretaria: {sec}", styles["ev_meta"]))
+                    blocks.append(Paragraph(f"Secretaria: {_html_escape(sec)}", styles["ev_meta"]))
+
+                # ✅ NOVO: Observações no PDF
+                obs = (row.get("observacoes") or "").strip()
+                if obs:
+                    obs_pdf = _html_escape(obs).replace("\n", "<br/>")
+                    blocks.append(Paragraph(f"<b>Observações</b>: {obs_pdf}", styles["ev_meta"]))
 
                 blocks.append(Spacer(1, 4))
 
@@ -636,6 +643,7 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
     pdf = buf.getvalue()
     buf.close()
     return pdf
+
 # =========================
 # UI
 # =========================
@@ -714,15 +722,31 @@ def _event_card(ev: dict):
 
     badges = ""
     if subtipo:
-        badges += f'<span class="badge badge-warning">🎯 {subtipo}</span>'
+        badges += f'<span class="badge badge-warning">🎯 {_html_escape(subtipo)}</span>'
     if turma:
-        badges += f'<span class="badge badge-success">📚 {turma}</span>'
+        badges += f'<span class="badge badge-success">📚 {_html_escape(turma)}</span>'
     if ev.get("secretaria"):
-        badges += f'<span class="badge badge-primary">📋 {ev.get("secretaria")}</span>'
+        badges += f'<span class="badge badge-primary">📋 {_html_escape(ev.get("secretaria"))}</span>'
 
     dirigentes = join_people(ev.get("dirigente1"), ev.get("dirigente2"), ev.get("dirigente3"))
     portaria = join_people(ev.get("portaria1"), ev.get("portaria2"), ev.get("portaria3"))
     recepcao = join_people(ev.get("recepcao1"), ev.get("recepcao2"), ev.get("recepcao3"))
+
+    # ✅ NOVO: Observações no Card
+    obs = (ev.get("observacoes") or "").strip()
+    obs_html = ""
+    if obs:
+        obs_safe = _html_escape(obs).replace("\n", "<br/>")
+        obs_html = f"""
+        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #E2E8F0;">
+          <div style="font-size: 0.95rem;">
+            <span style="font-weight: 700; color: {COLORS['secondary']};">📝 Observações</span>
+            <div style="color: {COLORS['text']}; margin-top: 6px; line-height: 1.35;">
+              {obs_safe}
+            </div>
+          </div>
+        </div>
+        """
 
     st.markdown(
         f"""
@@ -731,9 +755,9 @@ def _event_card(ev: dict):
 
           <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px;">
             <div style="min-width:0;">
-              <div style="font-weight: 800; font-size: 1.1rem; color: {COLORS['primary']};">{tipo_txt}</div>
+              <div style="font-weight: 800; font-size: 1.1rem; color: {COLORS['primary']};">{_html_escape(tipo_txt)}</div>
               <div style="font-size: 0.9rem; color: {COLORS['text_light']}; margin-top: 4px;">
-                📅 {data_txt} • 🕒 {hora_txt} • 🏛️ {congreg}
+                📅 {_html_escape(data_txt)} • 🕒 {_html_escape(hora_txt)} • 🏛️ {_html_escape(congreg)}
               </div>
             </div>
             <div style="text-align:right;">
@@ -744,17 +768,19 @@ def _event_card(ev: dict):
           <div style="margin: 12px 0;">
             <div style="font-size: 0.95rem; margin-bottom: 4px;">
               <span style="font-weight: 700; color: {COLORS['secondary']};">👤 Dirigentes</span>
-              <span style="color: {COLORS['text']}; margin-left: 8px;">{dirigentes or "Não informado"}</span>
+              <span style="color: {COLORS['text']}; margin-left: 8px;">{_html_escape(dirigentes) or "Não informado"}</span>
             </div>
             <div style="font-size: 0.95rem; margin-bottom: 4px;">
               <span style="font-weight: 700; color: {COLORS['secondary']};">🚪 Portaria</span>
-              <span style="color: {COLORS['text']}; margin-left: 8px;">{portaria or "Não informado"}</span>
+              <span style="color: {COLORS['text']}; margin-left: 8px;">{_html_escape(portaria) or "Não informado"}</span>
             </div>
             <div style="font-size: 0.95rem;">
               <span style="font-weight: 700; color: {COLORS['secondary']};">🤝 Recepção</span>
-              <span style="color: {COLORS['text']}; margin-left: 8px;">{recepcao or "Não informado"}</span>
+              <span style="color: {COLORS['text']}; margin-left: 8px;">{_html_escape(recepcao) or "Não informado"}</span>
             </div>
           </div>
+
+          {obs_html}
         </div>
         """,
         unsafe_allow_html=True
@@ -950,7 +976,14 @@ def page_agenda_publica():
             lambda r: join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3")), axis=1
         )
 
-        show = view[["Dia", "Data", "Horário", "congregacao", "Tipo", "Dirigentes", "Portaria", "Recepção", "secretaria"]]
+        # ✅ NOVO: Observações também na tabela
+        view["Observações"] = view.get("observacoes", "").fillna("").astype(str)
+
+        show = view[[
+            "Dia", "Data", "Horário", "congregacao", "Tipo",
+            "Dirigentes", "Portaria", "Recepção",
+            "secretaria", "Observações"
+        ]]
         show = show.rename(columns={"congregacao": "Congregação", "secretaria": "Secretaria"})
         return show
 
@@ -962,7 +995,7 @@ def page_agenda_publica():
                 st.info(f"{icon} Sem eventos deste tipo nesta semana.")
                 return
 
-            # NOVO: botão PDF estilo rodízio SEMPRE disponível na aba Todos
+            # Botão PDF rodízio na aba Todos
             if tipo_nome == "Todos":
                 pdf_rodizio = agenda_todos_to_pdf_rodizio(
                     subdf=sub,
@@ -983,12 +1016,10 @@ def page_agenda_publica():
                 with col_pdf2:
                     st.caption("Esse PDF sai no formato A4 estilo rodízio semanal, igual o modelo do anexo.")
 
-            # Tabela
             if modo == "Tabela":
                 show = make_table_view(sub)
                 st.dataframe(show, use_container_width=True, hide_index=True)
 
-                # Export PNG e CSV
                 png = df_to_png_bytes(
                     show,
                     title=f"{tipo_nome} • {_fmt_date_br(monday)} a {_fmt_date_br(sunday)}"
@@ -1012,9 +1043,8 @@ def page_agenda_publica():
                         use_container_width=True
                     )
 
-                # Mantém seu PDF tabela (opcional) para quem quiser
                 pdf_df = show.copy()
-                pdf_df = pdf_df.rename(columns={"Dirigentes": "Dirig.", "Recepção": "Recep."})
+                pdf_df = pdf_df.rename(columns={"Dirigentes": "Dirig.", "Recepção": "Recep.", "Observações": "Obs."})
                 title = "Agenda da Semana (A4)"
                 subtitle = f"{IGREJA_NOME}<br/>{_fmt_date_br(monday)} até {_fmt_date_br(sunday)}<br/>Congregação: {congregacao}"
                 pdf_bytes = df_to_pdf_bytes_a4(pdf_df, title=title, subtitle=subtitle)
@@ -1029,7 +1059,6 @@ def page_agenda_publica():
                         )
                 return
 
-            # Cards
             for _, r in sub.iterrows():
                 _event_card(r.to_dict())
 
@@ -1321,7 +1350,9 @@ def page_agenda_semana():
     df["Portaria"] = df.apply(lambda r: join_people(r.portaria1, r.portaria2, r.portaria3), axis=1)
     df["Recepção"] = df.apply(lambda r: join_people(r.recepcao1, r.recepcao2, r.recepcao3), axis=1)
 
-    view = df[["Data", "Horário", "congregacao", "Tipo", "Dirigente", "Portaria", "Recepção", "secretaria"]].rename(
+    df["Observações"] = df.get("observacoes", "").fillna("").astype(str)
+
+    view = df[["Data", "Horário", "congregacao", "Tipo", "Dirigente", "Portaria", "Recepção", "secretaria", "Observações"]].rename(
         columns={"congregacao": "Congregação", "secretaria": "Secretaria"}
     )
 
