@@ -709,42 +709,38 @@ def render_page_tabs():
                 st.rerun()
 
 def _event_card(ev: dict):
+    from html import escape
+
     d = pd.to_datetime(ev["data"]).date() if ev.get("data") else date.today()
-    weekday_txt = _weekday_label(d)
+    weekday_txt = escape(_weekday_label(d))
 
-    data_txt = _fmt_date_br(d)
-    hora_txt = _fmt_time_hhmm(ev.get("horario"))
-    congreg = ev.get("congregacao") or ""
+    data_txt = escape(_fmt_date_br(d))
+    hora_txt = escape(_fmt_time_hhmm(ev.get("horario")))
+    congreg = escape(ev.get("congregacao") or "")
 
-    tipo_txt = format_tipo(ev)
-    subtipo = ev.get("subtipo") or ""
-    turma = ev.get("turma_ebd") or ""
+    tipo_txt = escape(format_tipo(ev) or "")
+    subtipo = escape(ev.get("subtipo") or "")
+    turma = escape(ev.get("turma_ebd") or "")
 
     badges = ""
     if subtipo:
-        badges += f'<span class="badge badge-warning">🎯 {_html_escape(subtipo)}</span>'
+        badges += f'<span class="badge badge-warning">🎯 {subtipo}</span>'
     if turma:
-        badges += f'<span class="badge badge-success">📚 {_html_escape(turma)}</span>'
+        badges += f'<span class="badge badge-success">📚 {turma}</span>'
     if ev.get("secretaria"):
-        badges += f'<span class="badge badge-primary">📋 {_html_escape(ev.get("secretaria"))}</span>'
+        badges += f'<span class="badge badge-primary">📋 {escape(ev.get("secretaria") or "")}</span>'
 
-    dirigentes = join_people(ev.get("dirigente1"), ev.get("dirigente2"), ev.get("dirigente3"))
-    portaria = join_people(ev.get("portaria1"), ev.get("portaria2"), ev.get("portaria3"))
-    recepcao = join_people(ev.get("recepcao1"), ev.get("recepcao2"), ev.get("recepcao3"))
+    dirigentes = escape(join_people(ev.get("dirigente1"), ev.get("dirigente2"), ev.get("dirigente3")) or "")
+    portaria = escape(join_people(ev.get("portaria1"), ev.get("portaria2"), ev.get("portaria3")) or "")
+    recepcao = escape(join_people(ev.get("recepcao1"), ev.get("recepcao2"), ev.get("recepcao3")) or "")
 
-    # ✅ NOVO: Observações no Card
-    obs = (ev.get("observacoes") or "").strip()
+    obs = escape((ev.get("observacoes") or "").strip())
     obs_html = ""
     if obs:
-        obs_safe = _html_escape(obs).replace("\n", "<br/>")
         obs_html = f"""
         <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #E2E8F0;">
-          <div style="font-size: 0.95rem;">
-            <span style="font-weight: 700; color: {COLORS['secondary']};">📝 Observações</span>
-            <div style="color: {COLORS['text']}; margin-top: 6px; line-height: 1.35;">
-              {obs_safe}
-            </div>
-          </div>
+          <div style="font-weight: 800; color: {COLORS['secondary']}; margin-bottom: 4px;">📝 Observações</div>
+          <div style="color: {COLORS['text']}; font-size: 0.95rem; line-height: 1.35;">{obs}</div>
         </div>
         """
 
@@ -753,30 +749,28 @@ def _event_card(ev: dict):
         <div class="event-card">
           <div class="weekday-pill">{weekday_txt}</div>
 
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:8px;">
             <div style="min-width:0;">
-              <div style="font-weight: 800; font-size: 1.1rem; color: {COLORS['primary']};">{_html_escape(tipo_txt)}</div>
-              <div style="font-size: 0.9rem; color: {COLORS['text_light']}; margin-top: 4px;">
-                📅 {_html_escape(data_txt)} • 🕒 {_html_escape(hora_txt)} • 🏛️ {_html_escape(congreg)}
+              <div style="font-weight:800; font-size:1.1rem; color:{COLORS['primary']};">{tipo_txt}</div>
+              <div style="font-size:0.9rem; color:{COLORS['text_light']}; margin-top:4px;">
+                📅 {data_txt} • 🕒 {hora_txt} • 🏛️ {congreg}
               </div>
             </div>
-            <div style="text-align:right;">
-              {badges}
-            </div>
+            <div style="text-align:right;">{badges}</div>
           </div>
 
-          <div style="margin: 12px 0;">
-            <div style="font-size: 0.95rem; margin-bottom: 4px;">
-              <span style="font-weight: 700; color: {COLORS['secondary']};">👤 Dirigentes</span>
-              <span style="color: {COLORS['text']}; margin-left: 8px;">{_html_escape(dirigentes) or "Não informado"}</span>
+          <div style="margin:12px 0;">
+            <div style="font-size:0.95rem; margin-bottom:4px;">
+              <span style="font-weight:700; color:{COLORS['secondary']};">👤 Dirigentes</span>
+              <span style="color:{COLORS['text']}; margin-left:8px;">{dirigentes or "Não informado"}</span>
             </div>
-            <div style="font-size: 0.95rem; margin-bottom: 4px;">
-              <span style="font-weight: 700; color: {COLORS['secondary']};">🚪 Portaria</span>
-              <span style="color: {COLORS['text']}; margin-left: 8px;">{_html_escape(portaria) or "Não informado"}</span>
+            <div style="font-size:0.95rem; margin-bottom:4px;">
+              <span style="font-weight:700; color:{COLORS['secondary']};">🚪 Portaria</span>
+              <span style="color:{COLORS['text']}; margin-left:8px;">{portaria or "Não informado"}</span>
             </div>
-            <div style="font-size: 0.95rem;">
-              <span style="font-weight: 700; color: {COLORS['secondary']};">🤝 Recepção</span>
-              <span style="color: {COLORS['text']}; margin-left: 8px;">{_html_escape(recepcao) or "Não informado"}</span>
+            <div style="font-size:0.95rem;">
+              <span style="font-weight:700; color:{COLORS['secondary']};">🤝 Recepção</span>
+              <span style="color:{COLORS['text']}; margin-left:8px;">{recepcao or "Não informado"}</span>
             </div>
           </div>
 
@@ -785,6 +779,7 @@ def _event_card(ev: dict):
         """,
         unsafe_allow_html=True
     )
+
 
 # =========================
 # Sidebar
