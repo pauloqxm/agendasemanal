@@ -624,7 +624,7 @@ def agenda_todos_to_pdf_rodizio(
 
         for d, g in df_cat.groupby("data", sort=True):
             weekday = _weekday_label(d)
-            header = f"📅 {weekday}  {_fmt_date_br(d)}"
+            header = f"📆 {weekday}  {_fmt_date_br(d)}"
             flows.append(Paragraph(header, styles["day_title"]))
 
             for _, r in g.iterrows():
