@@ -1150,6 +1150,20 @@ def page_agenda_publica():
     render_group("Oração", tab_oracao, "🙏")
     render_group("Ensaio", tab_ensaio, "🎤")
 
+# Rodapé
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 0.5rem;">
+    <p style="font-size: 1.1rem; font-weight: 700;">Agenda da Igreja</p>
+    <p style="color: #999; font-size: 0.9rem;">
+        IADTC • Quixeramobim, Ce • Rua Vereador José Franco, 70 • Centro
+    </p>
+    <p style="color: #aaa; font-size: 0.8rem; margin-top: 1rem;">
+        © 2026 • @IADTC • Desenvolvido com Streamlit
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
 # =========================
 # Cadastro de Evento
 # =========================
@@ -1475,6 +1489,8 @@ def page_cadastrar_evento():
         st.session_state.cadastro_nonce = st.session_state.get("cadastro_nonce", 0) + 1
         st.rerun()
 
+    
+
 
 # =========================
 # Agenda da Semana
@@ -1694,21 +1710,6 @@ def page_usuarios():
                     reset_password(int(sel), nova)
                     st.success("✅ Senha atualizada com sucesso!")
                     st.rerun()
-
-# Rodapé
-st.markdown("---")
-st.markdown("""
-<div style="text-align: center; color: #666; padding: 0.5rem;">
-    <p style="font-size: 1.1rem; font-weight: 700;">Agenda da Igreja</p>
-    <p style="color: #999; font-size: 0.9rem;">
-        IADTC • Quixeramobim, Ce • Rua Vereador José Franco, 70 • Centro
-    </p>
-    <p style="color: #aaa; font-size: 0.8rem; margin-top: 1rem;">
-        © 2026 • @IADTC • Desenvolvido com Streamlit
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
 
 # =========================
 # Main
