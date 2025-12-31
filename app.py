@@ -208,14 +208,14 @@ def apply_css():
     .topbar {{
         background: linear-gradient(135deg, {COLORS['primary']} 0%, {COLORS['secondary']} 100%);
         border-radius: 16px;
-        padding: 1.5rem;
+        padding: 0.5rem;
         margin-bottom: 2rem;
         color: white;
         box-shadow: 0 10px 25px rgba(10, 31, 68, 0.15);
     }}
 
     .topbar-content {{
-        display: flex;
+        display: ;
         align-items: center;
         justify-content: space-between;
         gap: 1rem;
