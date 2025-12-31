@@ -104,7 +104,7 @@ def apply_css():
 
     .stTabs [data-baseweb="tab"] {{
         height: 40px;
-        white-space: pre-wrap;
+        white-space: nowrap;
         border-radius: 8px;
         gap: 8px;
         padding: 8px 16px;
