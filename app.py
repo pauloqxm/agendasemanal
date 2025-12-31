@@ -209,7 +209,7 @@ def apply_css():
         background: linear-gradient(135deg, {COLORS['primary']} 0%, {COLORS['secondary']} 100%);
         border-radius: 16px;
         padding: 0.5rem;
-        margin: 2rem 0%
+        margin: 2rem 0%;
         margin-bottom: 2rem;
         color: white;
         box-shadow: 0 10px 25px rgba(10, 31, 68, 0.15);
