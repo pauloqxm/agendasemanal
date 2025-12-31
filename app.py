@@ -411,14 +411,6 @@ def agenda_todos_to_pdf_rodizio(
     if subdf is None or subdf.empty:
         return (None, None) if return_png else None
 
-    from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import cm
-    from reportlab.lib import colors
-    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import Image as RLImage
-
     def _try_fetch_logo_bytes(url: str):
         try:
             with urlopen(url, timeout=8) as r:
@@ -458,6 +450,7 @@ def agenda_todos_to_pdf_rodizio(
     dfp["categoria"] = dfp.apply(lambda r: _cat_from_tipo(r.to_dict()), axis=1)
     dfp = dfp.sort_values(["categoria", "data", "horario_txt", "congregacao"], ascending=True)
 
+    # estilos
     base = getSampleStyleSheet()
     styles = {
         "h_title": ParagraphStyle(
@@ -546,13 +539,14 @@ def agenda_todos_to_pdf_rodizio(
         "Outros": {"bg": "#F1F5F9", "line": COLORS["secondary"]},
     }
 
-    def _cat_header(cat_name: str, frame_width: float):
+    def _cat_header_flowables(cat_name: str, doc_width: float):
         meta = cat_colors.get(cat_name, cat_colors["Outros"])
         bg = colors.HexColor(meta["bg"])
         ln = colors.HexColor(meta["line"])
 
         title = cat_name.upper()
-        title_tbl = Table([[Paragraph(title, styles["cat_title"])]], colWidths=[frame_width])
+
+        title_tbl = Table([[Paragraph(title, styles["cat_title"])]], colWidths=[doc_width])
         title_tbl.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), bg),
             ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#CBD5E1")),
@@ -562,7 +556,7 @@ def agenda_todos_to_pdf_rodizio(
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ]))
 
-        line_tbl = Table([[""]], colWidths=[frame_width], rowHeights=[2])
+        line_tbl = Table([[""]], colWidths=[doc_width], rowHeights=[2])
         line_tbl.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), ln),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -573,48 +567,59 @@ def agenda_todos_to_pdf_rodizio(
 
         return [Spacer(1, 6), title_tbl, line_tbl, Spacer(1, 6)]
 
-    # =========
-    # DOC 2 COLUNAS DE VERDADE (Frames)
-    # =========
+    def _build_category_flowables(cat: str, doc_width: float):
+        flows = []
+        df_cat = dfp[dfp["categoria"] == cat].copy()
+        if df_cat.empty:
+            return flows
+
+        flows.extend(_cat_header_flowables(cat, doc_width))
+
+        for d, g in df_cat.groupby("data", sort=True):
+            weekday = _weekday_label(d)
+            header = f"{weekday}  {_fmt_date_br(d)}"
+            flows.append(Paragraph(header, styles["day_title"]))
+
+            for _, r in g.iterrows():
+                row = r.to_dict()
+                flows.append(Paragraph(_fmt_dt_line(row), styles["ev_line"]))
+
+                dirigentes = _people_line("Dirigentes", row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3"))
+                portaria = _people_line("Portaria", row.get("portaria1"), row.get("portaria2"), row.get("portaria3"))
+                recepcao = _people_line("Recepção", row.get("recepcao1"), row.get("recepcao2"), row.get("recepcao3"))
+
+                if dirigentes:
+                    flows.append(Paragraph(_html_escape(dirigentes), styles["ev_meta"]))
+                if portaria:
+                    flows.append(Paragraph(_html_escape(portaria), styles["ev_meta"]))
+                if recepcao:
+                    flows.append(Paragraph(_html_escape(recepcao), styles["ev_meta"]))
+
+                sec = (row.get("secretaria") or "").strip()
+                if sec:
+                    flows.append(Paragraph(f"Secretaria: {_html_escape(sec)}", styles["ev_meta"]))
+
+                obs = (row.get("observacoes") or "").strip()
+                if obs:
+                    obs_pdf = _html_escape(obs).replace("\n", "<br/>")
+                    flows.append(Paragraph(f"<b>Observações</b>: {obs_pdf}", styles["ev_meta"]))
+
+                flows.append(Spacer(1, 3))
+
+        flows.append(Spacer(1, 8))
+        return flows
+
+    # Monta PDF
     buf = io.BytesIO()
-
-    left_margin = 2.0 * cm
-    right_margin = 2.0 * cm
-    top_margin = 1.4 * cm
-    bottom_margin = 1.6 * cm
-
-    page_w, page_h = A4
-    usable_w = page_w - (left_margin + right_margin)
-    gap = 12  # espaço entre colunas
-    col_w = (usable_w - gap) / 2.0
-
-    frame_h = page_h - top_margin - bottom_margin
-    x_left = left_margin
-    x_right = left_margin + col_w + gap
-    y = bottom_margin
-
-    frame_left = Frame(x_left, y, col_w, frame_h, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="L")
-    frame_right = Frame(x_right, y, col_w, frame_h, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="R")
-
-    def _on_page(canvas, doc_obj):
-        # Linha separando as colunas
-        x_line = left_margin + col_w + gap / 2.0
-        canvas.saveState()
-        canvas.setStrokeColor(colors.HexColor("#CBD5E1"))
-        canvas.setLineWidth(0.8)
-        canvas.line(x_line, bottom_margin, x_line, page_h - top_margin)
-        canvas.restoreState()
-
-    doc = BaseDocTemplate(
+    doc = SimpleDocTemplate(
         buf,
         pagesize=A4,
-        leftMargin=left_margin,
-        rightMargin=right_margin,
-        topMargin=top_margin,
-        bottomMargin=bottom_margin,
+        leftMargin=2.0 * cm,
+        rightMargin=2.0 * cm,
+        topMargin=1.4 * cm,
+        bottomMargin=1.6 * cm,
         title="Rodízio Semanal"
     )
-    doc.addPageTemplates([PageTemplate(id="TwoCol", frames=[frame_left, frame_right], onPage=_on_page)])
 
     story = []
 
@@ -638,46 +643,53 @@ def agenda_todos_to_pdf_rodizio(
         story.append(Paragraph(f"Congregação: {congregacao_txt}", styles["small_center"]))
     story.append(Spacer(1, 10))
 
-    # Conteúdo fluindo nas colunas
+    # Larguras das 2 colunas
+    page_w = A4[0]
+    usable_w = page_w - (doc.leftMargin + doc.rightMargin)
+    gap = 12
+    col_w = (usable_w - gap) / 2.0
+
+    # Distribui categorias para balancear (heurística simples)
+    left = []
+    right = []
+    sum_l = 0
+    sum_r = 0
+
     for cat in categories:
-        df_cat = dfp[dfp["categoria"] == cat].copy()
-        if df_cat.empty:
+        flows = _build_category_flowables(cat, col_w)
+        if not flows:
             continue
 
-        story.extend(_cat_header(cat, col_w))
+        weight = len(flows)
 
-        for d, g in df_cat.groupby("data", sort=True):
-            weekday = _weekday_label(d)
-            header = f"{weekday}  {_fmt_date_br(d)}"
-            story.append(Paragraph(header, styles["day_title"]))
+        if sum_l <= sum_r:
+            left.extend(flows)
+            sum_l += weight
+        else:
+            right.extend(flows)
+            sum_r += weight
 
-            for _, r in g.iterrows():
-                row = r.to_dict()
-                story.append(Paragraph(_fmt_dt_line(row), styles["ev_line"]))
+    if not left and not right:
+        return (None, None) if return_png else None
 
-                dirigentes = _people_line("Dirigentes", row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3"))
-                portaria = _people_line("Portaria", row.get("portaria1"), row.get("portaria2"), row.get("portaria3"))
-                recepcao = _people_line("Recepção", row.get("recepcao1"), row.get("recepcao2"), row.get("recepcao3"))
+    # Tabela com 2 colunas e linha separadora no meio
+    two_cols = Table([[left, right]], colWidths=[col_w, col_w])
+    two_cols.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
 
-                if dirigentes:
-                    story.append(Paragraph(_html_escape(dirigentes), styles["ev_meta"]))
-                if portaria:
-                    story.append(Paragraph(_html_escape(portaria), styles["ev_meta"]))
-                if recepcao:
-                    story.append(Paragraph(_html_escape(recepcao), styles["ev_meta"]))
+        # espaço entre colunas
+        ("RIGHTPADDING", (0, 0), (0, 0), gap / 2),
+        ("LEFTPADDING", (1, 0), (1, 0), gap / 2),
 
-                sec = (row.get("secretaria") or "").strip()
-                if sec:
-                    story.append(Paragraph(f"Secretaria: {_html_escape(sec)}", styles["ev_meta"]))
+        # linha separadora vertical
+        ("LINEBEFORE", (1, 0), (1, 0), 0.8, colors.HexColor("#CBD5E1")),
+    ]))
 
-                obs = (row.get("observacoes") or "").strip()
-                if obs:
-                    obs_pdf = _html_escape(obs).replace("\n", "<br/>")
-                    story.append(Paragraph(f"<b>Observações</b>: {obs_pdf}", styles["ev_meta"]))
-
-                story.append(Spacer(1, 3))
-
-        story.append(Spacer(1, 8))
+    story.append(two_cols)
 
     doc.build(story)
     pdf_bytes = buf.getvalue()
@@ -686,7 +698,7 @@ def agenda_todos_to_pdf_rodizio(
     if not return_png:
         return pdf_bytes
 
-    # PNG igual ao PDF (render da 1ª página)
+    # PNG igual ao PDF (render 1ª página)
     png_bytes = None
     try:
         import fitz  # PyMuPDF
