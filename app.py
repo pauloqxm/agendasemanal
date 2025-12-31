@@ -433,9 +433,21 @@ def agenda_todos_to_pdf_rodizio(
         hora = (str(row.get("horario"))[:5] if row.get("horario") else "").strip()
         tipo_txt = (format_tipo(row) or "").strip()
         congreg = (row.get("congregacao") or "").strip()
-        line = f"• {hora} {tipo_txt}"
-        if congreg:
-            line += f" ({congreg})"
+
+        # escapa pra não quebrar markup do ReportLab
+        hora_e = _html_escape(hora)
+        tipo_e = _html_escape(tipo_txt)
+        congreg_e = _html_escape(congreg)
+
+        line = f"• {hora_e} {tipo_e}"
+        if congreg_e:
+            # Congregação com preenchimento azul (inline)
+            line += (
+                " "
+                "<font backColor='#DBEAFE' color='#0f172a'>"
+                f" ({congreg_e}) "
+                "</font>"
+            )
         return line
 
     def _people_line(label: str, *names) -> str:
@@ -444,14 +456,14 @@ def agenda_todos_to_pdf_rodizio(
             return ""
         return f"{label}: {val}"
 
-    # Normaliza DF
+    # ===== Normaliza DF =====
     dfp = subdf.copy()
     dfp["data"] = pd.to_datetime(dfp["data"]).dt.date
     dfp["horario_txt"] = dfp["horario"].astype(str).str[:5]
     dfp["categoria"] = dfp.apply(lambda r: _cat_from_tipo(r.to_dict()), axis=1)
     dfp = dfp.sort_values(["categoria", "data", "horario_txt", "congregacao"], ascending=True)
 
-    # estilos
+    # ===== estilos =====
     base = getSampleStyleSheet()
     styles = {
         "h_title": ParagraphStyle(
@@ -524,9 +536,18 @@ def agenda_todos_to_pdf_rodizio(
             leftIndent=14,
             spaceAfter=2
         ),
+        "badge_center": ParagraphStyle(
+            "badge_center",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=9,
+            leading=11,
+            textColor=colors.HexColor("#0f172a"),
+            alignment=1
+        ),
     }
 
-    # ordem fixa
+    # ===== ordem fixa =====
     order = ["Culto", "Ensaio", "Oração", "EBD"]
     found = [c for c in order if c in set(dfp["categoria"].tolist())]
     extras = sorted([c for c in dfp["categoria"].unique().tolist() if c not in found])
@@ -540,12 +561,37 @@ def agenda_todos_to_pdf_rodizio(
         "Outros": {"bg": "#F1F5F9", "line": COLORS["secondary"]},
     }
 
+    cat_emojis = {
+        "Culto": "⛪",
+        "EBD": "📖",
+        "Ensaio": "🎶",
+        "Oração": "🙏",
+        "Outros": "📌",
+    }
+
+    def _congregacao_badge(text: str, doc_width: float):
+        txt = (text or "").strip()
+        if not txt:
+            return None
+        p = Paragraph(f"Congregação. {_html_escape(txt)}", styles["badge_center"])
+        t = Table([[p]], colWidths=[doc_width])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#DBEAFE")),
+            ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#93C5FD")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        return t
+
     def _cat_header_flowables(cat_name: str, doc_width: float):
         meta = cat_colors.get(cat_name, cat_colors["Outros"])
         bg = colors.HexColor(meta["bg"])
         ln = colors.HexColor(meta["line"])
 
-        title = cat_name.upper()
+        emoji = cat_emojis.get(cat_name, "📌")
+        title = f"{emoji} {cat_name.upper()}"
 
         title_tbl = Table([[Paragraph(title, styles["cat_title"])]], colWidths=[doc_width])
         title_tbl.setStyle(TableStyle([
@@ -578,7 +624,7 @@ def agenda_todos_to_pdf_rodizio(
 
         for d, g in df_cat.groupby("data", sort=True):
             weekday = _weekday_label(d)
-            header = f"{weekday}  {_fmt_date_br(d)}"
+            header = f"📅 {weekday}  {_fmt_date_br(d)}"
             flows.append(Paragraph(header, styles["day_title"]))
 
             for _, r in g.iterrows():
@@ -610,7 +656,7 @@ def agenda_todos_to_pdf_rodizio(
         flows.append(Spacer(1, 8))
         return flows
 
-    # Monta PDF
+    # ===== Monta PDF =====
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
@@ -640,17 +686,22 @@ def agenda_todos_to_pdf_rodizio(
     story.append(Paragraph("RODÍZIO SEMANAL", styles["h_title"]))
     story.append(Paragraph(f"PERÍODO DE {_fmt_date_br(monday)} A {_fmt_date_br(sunday)}", styles["h_sub"]))
     story.append(Paragraph(IGREJA_NOME, styles["small_center"]))
-    if congregacao_txt:
-        story.append(Paragraph(f"Congregação: {congregacao_txt}", styles["small_center"]))
+
+    # Badge da Congregação com preenchimento azul
+    page_w = A4[0]
+    usable_w = page_w - (doc.leftMargin + doc.rightMargin)
+    badge = _congregacao_badge(congregacao_txt, usable_w)
+    if badge:
+        story.append(Spacer(1, 4))
+        story.append(badge)
+
     story.append(Spacer(1, 10))
 
     # Larguras das 2 colunas
-    page_w = A4[0]
-    usable_w = page_w - (doc.leftMargin + doc.rightMargin)
     gap = 12
     col_w = (usable_w - gap) / 2.0
 
-    # Distribui categorias para balancear (heurística simples)
+    # Distribui categorias para balancear
     left = []
     right = []
     sum_l = 0
@@ -682,11 +733,9 @@ def agenda_todos_to_pdf_rodizio(
         ("TOPPADDING", (0, 0), (-1, -1), 0),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
 
-        # espaço entre colunas
         ("RIGHTPADDING", (0, 0), (0, 0), gap / 2),
         ("LEFTPADDING", (1, 0), (1, 0), gap / 2),
 
-        # linha separadora vertical
         ("LINEBEFORE", (1, 0), (1, 0), 0.8, colors.HexColor("#CBD5E1")),
     ]))
 
@@ -712,6 +761,7 @@ def agenda_todos_to_pdf_rodizio(
         png_bytes = None
 
     return pdf_bytes, png_bytes
+
 
 
 # =========================
