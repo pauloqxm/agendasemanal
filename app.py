@@ -7,9 +7,8 @@ from datetime import date, datetime, timedelta
 # PDF (A4)
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import cm
 
 from agenda_igreja.db import test_db_connection
 from agenda_igreja.auth import (
@@ -294,11 +293,11 @@ def apply_css():
 # Helpers
 # =========================
 _WEEKDAYS_PT = {
-    0: "SEGUNDA",
-    1: "TERÇA",
-    2: "QUARTA",
-    3: "QUINTA",
-    4: "SEXTA",
+    0: "SEGUNDA-FEIRA",
+    1: "TERÇA-FEIRA",
+    2: "QUARTA-FEIRA",
+    3: "QUINTA-FEIRA",
+    4: "SEXTA-FEIRA",
     5: "SÁBADO",
     6: "DOMINGO",
 }
@@ -381,227 +380,6 @@ def df_to_pdf_bytes_a4(df: pd.DataFrame, title: str, subtitle: str):
     return pdf
 
 # =========================
-# PDF do Rodízio Semanal (Formato da imagem)
-# =========================
-def generate_rodizio_pdf(start_date: date, end_date: date, eventos: list):
-    """
-    Gera PDF do rodízio semanal no formato da imagem fornecida
-    """
-    buf = io.BytesIO()
-    
-    # Configurar documento A4
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=A4,
-        leftMargin=2*cm,
-        rightMargin=2*cm,
-        topMargin=2*cm,
-        bottomMargin=1.5*cm
-    )
-    
-    styles = getSampleStyleSheet()
-    story = []
-    
-    # ======================
-    # CABEÇALHO
-    # ======================
-    # Título principal - estilo inspirado na imagem
-    title_style = styles["Title"]
-    title_style.fontSize = 18
-    title_style.fontName = "Helvetica-Bold"
-    title_style.textColor = colors.black
-    title_style.spaceAfter = 0.2*cm
-    title_style.alignment = 1  # Center
-    
-    story.append(Paragraph("RODÍZIO SEMANAL", title_style))
-    
-    # Período - estilo da imagem
-    periodo_style = styles["Normal"]
-    periodo_style.fontSize = 12
-    periodo_style.fontName = "Helvetica"
-    periodo_style.textColor = colors.black
-    periodo_style.alignment = 1
-    periodo_style.spaceAfter = 1*cm
-    
-    # Formatar datas como na imagem (29/12 a 04/01)
-    periodo_text = f"PERÍODO DE {start_date.strftime('%d/%m')} A {end_date.strftime('%d/%m')} DE {end_date.strftime('%Y')}"
-    story.append(Paragraph(periodo_text, periodo_style))
-    
-    # ======================
-    # ORGANIZAR EVENTOS POR DIA
-    # ======================
-    eventos_por_dia = {}
-    for ev in eventos:
-        d = pd.to_datetime(ev["data"]).date()
-        dia_semana = _weekday_label(d)
-        
-        if dia_semana not in eventos_por_dia:
-            eventos_por_dia[dia_semana] = []
-        
-        # Adicionar informações formatadas
-        ev_formatado = {
-            "original": ev,
-            "hora": _fmt_time_hhmm(ev.get("horario")),
-            "tipo": format_tipo(ev),
-            "dirigentes": [],
-            "portaria": [],
-            "recepcao": [],
-            "regente": None,
-            "secretaria": ev.get("secretaria")
-        }
-        
-        # Dirigentes
-        for key in ["dirigente1", "dirigente2", "dirigente3"]:
-            if ev.get(key):
-                ev_formatado["dirigentes"].append(ev[key])
-        
-        # Portaria
-        for key in ["portaria1", "portaria2", "portaria3"]:
-            if ev.get(key):
-                ev_formatado["portaria"].append(ev[key])
-        
-        # Recepção
-        for key in ["recepcao1", "recepcao2", "recepcao3"]:
-            if ev.get(key):
-                ev_formatado["recepcao"].append(ev[key])
-        
-        # Regente especial para ensaios
-        if ev.get("tipo") == "Ensaio" and ev.get("dirigente1"):
-            ev_formatado["regente"] = ev["dirigente1"]
-        
-        eventos_por_dia[dia_semana].append(ev_formatado)
-    
-    # ======================
-    # DIAS DA SEMANA (formato da imagem)
-    # ======================
-    dias_ordem = ["SEGUNDA", "TERÇA", "QUARTA", "QUINTA", "SEXTA", "SÁBADO", "DOMINGO"]
-    
-    for dia_nome in dias_ordem:
-        # DIA DA SEMANA em negrito, seguindo padrão da imagem
-        dia_style = styles["Normal"]
-        dia_style.fontSize = 11
-        dia_style.fontName = "Helvetica-Bold"
-        dia_style.textColor = colors.black
-        dia_style.spaceAfter = 0.2*cm
-        dia_style.spaceBefore = 0.5*cm if dia_nome != "SEGUNDA" else 0
-        
-        # Formatar como na imagem: "- SEGUNDA, 18h:"
-        eventos_dia = eventos_por_dia.get(dia_nome, [])
-        
-        if not eventos_dia:
-            # Se não houver eventos, mostrar "Não haverá trabalho"
-            story.append(Paragraph(f"<b>{dia_nome}</b>", dia_style))
-            
-            no_event_style = styles["Normal"]
-            no_event_style.fontSize = 10
-            no_event_style.fontName = "Helvetica"
-            no_event_style.textColor = colors.black
-            no_event_style.leftIndent = 0.5*cm
-            no_event_style.spaceAfter = 0.3*cm
-            
-            story.append(Paragraph("Não haverá trabalho", no_event_style))
-            continue
-        
-        # Ordenar eventos por horário
-        eventos_dia.sort(key=lambda x: x["hora"])
-        
-        # Para cada evento do dia
-        for i, ev in enumerate(eventos_dia):
-            if i == 0:
-                # Primeiro evento do dia: mostrar dia da semana
-                if ev["hora"]:
-                    dia_text = f"<b>{dia_nome}</b>, {ev['hora']}h: {ev['tipo']}"
-                else:
-                    dia_text = f"<b>{dia_nome}</b>: {ev['tipo']}"
-                
-                story.append(Paragraph(dia_text, dia_style))
-            else:
-                # Eventos subsequentes no mesmo dia
-                if ev["hora"]:
-                    ev_text = f"{ev['hora']}h: {ev['tipo']}"
-                else:
-                    ev_text = ev['tipo']
-                
-                ev_style = styles["Normal"]
-                ev_style.fontSize = 10
-                ev_style.fontName = "Helvetica"
-                ev_style.textColor = colors.black
-                ev_style.leftIndent = 0.5*cm
-                ev_style.spaceAfter = 0.2*cm
-                
-                story.append(Paragraph(ev_text, ev_style))
-            
-            # DIRIGENTES (formato da imagem)
-            if ev["dirigentes"]:
-                dir_style = styles["Normal"]
-                dir_style.fontSize = 9
-                dir_style.fontName = "Helvetica"
-                dir_style.textColor = colors.black
-                dir_style.leftIndent = 1*cm
-                dir_style.spaceAfter = 0.1*cm
-                
-                if ev["regente"]:
-                    # Formato especial para ensaios: "Regente: Nome"
-                    dir_text = f"Regente: {ev['regente']}"
-                else:
-                    # Formato normal: "Dirigentes: Nome1 e Nome2"
-                    dirigentes_text = " e ".join(ev["dirigentes"])
-                    dir_text = f"Dirigentes: {dirigentes_text}"
-                
-                story.append(Paragraph(dir_text, dir_style))
-            
-            # PORTARIA (se houver)
-            if ev["portaria"]:
-                port_style = styles["Normal"]
-                port_style.fontSize = 9
-                port_style.fontName = "Helvetica"
-                port_style.textColor = colors.black
-                port_style.leftIndent = 1*cm
-                port_style.spaceAfter = 0.1*cm
-                
-                portaria_text = " e ".join(ev["portaria"])
-                port_text = f"Portaria: {portaria_text}"
-                story.append(Paragraph(port_text, port_style))
-            
-            # RECEPÇÃO (se houver)
-            if ev["recepcao"]:
-                rec_style = styles["Normal"]
-                rec_style.fontSize = 9
-                rec_style.fontName = "Helvetica"
-                rec_style.textColor = colors.black
-                rec_style.leftIndent = 1*cm
-                rec_style.spaceAfter = 0.3*cm
-                
-                recepcao_text = " e ".join(ev["recepcao"])
-                rec_text = f"Recepção: {recepcao_text}"
-                story.append(Paragraph(rec_text, rec_style))
-            
-            # Adicionar espaço extra entre eventos do mesmo dia
-            if i < len(eventos_dia) - 1:
-                story.append(Spacer(1, 0.1*cm))
-    
-    # ======================
-    # RODAPÉ
-    # ======================
-    story.append(Spacer(1, 1*cm))
-    
-    footer_style = styles["Normal"]
-    footer_style.fontSize = 8
-    footer_style.fontName = "Helvetica-Oblique"
-    footer_style.textColor = colors.grey
-    footer_style.alignment = 1
-    
-    story.append(Paragraph("Sistema de Gestão de Agenda - Igreja Assembleia de Deus Templo Central | Quixeramobim-Ce", footer_style))
-    story.append(Paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", footer_style))
-    
-    # Construir PDF
-    doc.build(story)
-    pdf_bytes = buf.getvalue()
-    buf.close()
-    
-    return pdf_bytes
-
-# =========================
 # UI
 # =========================
 def render_topbar():
@@ -644,13 +422,11 @@ def render_page_tabs():
     if not st.session_state.auth_ok:
         pages = [
             {"id": "Agenda Pública", "label": "📅 Agenda Pública"},
-            {"id": "Rodízio Semanal", "label": "📋 Rodízio Semanal"},
             {"id": "Login", "label": "🔐 Login"}
         ]
     else:
         pages = [
             {"id": "Agenda Pública", "label": "📅 Agenda Pública"},
-            {"id": "Rodízio Semanal", "label": "📋 Rodízio Semanal"},
             {"id": "Agenda da Semana", "label": "📊 Agenda da Semana"},
             {"id": "Cadastrar Evento", "label": "➕ Cadastrar Evento"},
             {"id": "Gerenciar Eventos", "label": "⚙️ Gerenciar Eventos"}
@@ -835,189 +611,6 @@ def page_login():
                 st.rerun()
             else:
                 st.error("❌ Usuário ou senha inválidos.")
-
-# =========================
-# Rodízio Semanal
-# =========================
-def page_rodizio_semanal():
-    st.markdown(
-        f"""
-        <div class="modern-card">
-          <h2 style="color: {COLORS['primary']}; margin-bottom: 0.5rem;">📋 Rodízio Semanal</h2>
-          <p style="color: {COLORS['text_light']}; margin-bottom: 1.5rem;">
-            Gere o rodízio semanal no formato A4 para impressão, seguindo o modelo da imagem
-          </p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    
-    # Mostrar imagem de referência
-    st.markdown(
-        f"""
-        <div class="modern-card">
-          <h3 style="color: {COLORS['secondary']}; margin-bottom: 1rem;">📸 Modelo de Referência</h3>
-          <p style="color: {COLORS['text_light']}; margin-bottom: 1rem;">
-            Formato a ser seguido no PDF gerado:
-          </p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        data_ref = st.date_input("📆 Semana de referência", value=date.today(), format="DD/MM/YYYY")
-    with col2:
-        congregacao = st.selectbox("🏛️ Congregação", ["Todas"] + CONGREGACOES)
-    
-    # Calcular início e fim da semana
-    monday, sunday = week_bounds(data_ref)
-    
-    # Buscar eventos
-    eventos = list_events_between(
-        monday,
-        sunday,
-        congregacao=None if congregacao == "Todas" else congregacao,
-        tipo=None
-    )
-    
-    # Pré-visualização
-    st.markdown(
-        f"""
-        <div class="modern-card">
-          <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
-            <div>
-              <h3 style="color: {COLORS['secondary']}; margin-bottom: 0.5rem;">👁️ Pré-visualização do Rodízio</h3>
-              <p style="margin: 0.5rem 0; color: {COLORS['text_light']};">
-                <strong>Período:</strong> {monday.strftime('%d/%m')} a {sunday.strftime('%d/%m')} de {sunday.strftime('%Y')}
-              </p>
-              <p style="margin: 0; color: {COLORS['text_light']};">
-                <strong>Total de eventos:</strong> {len(eventos)}
-              </p>
-            </div>
-            <span class="badge badge-primary">{congregacao}</span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    
-    if not eventos:
-        st.warning("📭 Nenhum evento cadastrado nesta semana para gerar o rodízio.")
-        
-        # Mostrar exemplo baseado na imagem
-        with st.expander("ℹ️ Exemplo do formato que será gerado (baseado na imagem)"):
-            st.markdown("""
-            **RODÍZIO SEMANAL – PERÍODO DE 29/12 A 04/01 DE 2025**
-
-            - **SEGUNDA**, 18h: Círculo de Oração - Dirigentes: Ir. Rosa e Ir. Regina  
-              19h: Ensaio para conjunto de senhoras - Regente: Lena  
-
-            - **TERÇA**, 19h:  
-              Portaria:  
-
-            - **QUARTA**, 21h: Culto de Ano Novo / Santa Ceia - Dirigente: Pastor Salviano Leandro  
-              Portaria: Dc. Cleiton e Aux. Fco José  
-
-            - **QUINTA**, 19h: Não haverá trabalho  
-
-            - **SEXTA**, 19h: Oração para toda Igreja - Dirigente: Pastor Salviano Leandro  
-              Portaria: Cong. de Boa Esperança  
-
-            - **SABADO**, 19h: Não haverá trabalho  
-              Portaria:  
-
-            - **DOMINGO**, 19h: 1ª Santa ceia de 2026 e posse dos cargos- Dirigente: Pr. Salviano  
-              Portaria: Dc. Marcos Guilherme e Aux. Kaique Gomes  
-              Recepção: Ir. Dayanne, Ir. Layma e Aux. Natanael  
-            """)
-    else:
-        # Mostrar eventos organizados por dia
-        for dia_offset in range(7):
-            dia_atual = monday + timedelta(days=dia_offset)
-            dia_nome = _weekday_label(dia_atual)
-            
-            eventos_dia = [e for e in eventos if pd.to_datetime(e["data"]).date() == dia_atual]
-            
-            if eventos_dia:
-                st.markdown(f"**{dia_nome}** ({dia_atual.strftime('%d/%m')})")
-                
-                for ev in eventos_dia:
-                    hora = _fmt_time_hhmm(ev.get("horario"))
-                    tipo = format_tipo(ev)
-                    
-                    col_a, col_b = st.columns([1, 3])
-                    with col_a:
-                        st.markdown(f"`{hora}h`" if hora else "`--:--`")
-                    with col_b:
-                        st.markdown(f"**{tipo}**")
-                        
-                        # Dirigentes
-                        dirigentes = []
-                        for key in ["dirigente1", "dirigente2", "dirigente3"]:
-                            if ev.get(key):
-                                dirigentes.append(ev[key])
-                        
-                        if dirigentes:
-                            st.markdown(f"👤 **Dirigentes:** {', '.join(dirigentes)}")
-                        
-                        # Portaria
-                        portaria = []
-                        for key in ["portaria1", "portaria2", "portaria3"]:
-                            if ev.get(key):
-                                portaria.append(ev[key])
-                        
-                        if portaria:
-                            st.markdown(f"🚪 **Portaria:** {', '.join(portaria)}")
-                        
-                        # Recepção
-                        recepcao = []
-                        for key in ["recepcao1", "recepcao2", "recepcao3"]:
-                            if ev.get(key):
-                                recepcao.append(ev[key])
-                        
-                        if recepcao:
-                            st.markdown(f"🤝 **Recepção:** {', '.join(recepcao)}")
-                        
-                        st.divider()
-            else:
-                st.markdown(f"**{dia_nome}** ({dia_atual.strftime('%d/%m')})")
-                st.markdown("*Não haverá trabalho*")
-                st.divider()
-    
-    # Botão para gerar PDF
-    col_btn1, col_btn2 = st.columns(2)
-    
-    with col_btn1:
-        if st.button("🧾 Gerar Rodízio em PDF (A4)", type="primary", use_container_width=True):
-            if eventos:
-                try:
-                    pdf_bytes = generate_rodizio_pdf(
-                        start_date=monday,
-                        end_date=sunday,
-                        eventos=eventos
-                    )
-                    
-                    # Botão de download
-                    st.download_button(
-                        label="📥 Baixar Rodízio Semanal",
-                        data=pdf_bytes,
-                        file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
-                    
-                    st.success("✅ PDF gerado com sucesso! Clique no botão acima para baixar.")
-                except Exception as e:
-                    st.error(f"❌ Erro ao gerar PDF: {e}")
-            else:
-                st.warning("⚠️ Não há eventos para gerar o rodízio.")
-    
-    with col_btn2:
-        if st.button("📅 Voltar para Agenda", use_container_width=True):
-            st.session_state.page = "Agenda Pública"
-            st.rerun()
 
 # =========================
 # Agenda Pública
@@ -1640,10 +1233,6 @@ def main():
 
     if page == "Agenda Pública":
         page_agenda_publica()
-        return
-    
-    if page == "Rodízio Semanal":
-        page_rodizio_semanal()
         return
 
     if page == "Login":
