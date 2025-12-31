@@ -1743,17 +1743,62 @@ st.markdown("""
     <a href="#top" class="top-btn">↑</a>
 </div>
 """, unsafe_allow_html=True)
-    
+
 # Rodapé
 st.markdown("---")
+
 st.markdown("""
-<div style="text-align: center; color: #666; padding: 0.5rem;">
-    <p style="font-size: 1.1rem; font-weight: 700;">Agenda da Igreja</p>
-    <p style="color: #999; font-size: 0.9rem;">
-        IADTC • Quixeramobim, Ce • Rua Vereador José Franco, 70 • Centro
-    </p>
-    <p style="color: #aaa; font-size: 0.8rem; margin-top: 1rem;">
-        © 2026 • @IADTC • Desenvolvido com Streamlit
-    </p>
+<style>
+.simple-footer {
+    text-align: center;
+    padding: 1rem 0;
+    color: #555;
+}
+
+.simple-footer-logo {
+    height: 50px;
+    margin-bottom: 0.5rem;
+}
+
+.footer-title {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #333;
+    margin-bottom: 0.3rem;
+}
+
+.footer-subtitle {
+    color: #666;
+    font-size: 0.9rem;
+    margin-bottom: 0.8rem;
+}
+
+.footer-address {
+    color: #777;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    margin-bottom: 0.8rem;
+}
+
+.footer-copyright {
+    color: #999;
+    font-size: 0.8rem;
+    border-top: 1px solid #eee;
+    padding-top: 0.8rem;
+    margin-top: 0.8rem;
+}
+</style>
+
+<div class="simple-footer">
+    <img src="https://i.ibb.co/jZkYm687/logo-adtce.jpg" alt="Logo IADTC" class="simple-footer-logo">
+    <div class="footer-title">Agenda da Igreja</div>
+    <div class="footer-subtitle">Igreja Assembleia de Deus - Templo Central</div>
+    <div class="footer-address">
+        Rua Vereador José Franco, 70 • Centro<br>
+        Quixeramobim, Ceará
+    </div>
+    <div class="footer-copyright">
+        © 2026 • IADTC • Desenvolvido com Streamlit
+    </div>
 </div>
 """, unsafe_allow_html=True)
