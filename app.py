@@ -7,8 +7,16 @@ from datetime import date, datetime, timedelta
 # PDF (A4)
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Table,
+    TableStyle,
+    Paragraph,
+    Spacer,
+    KeepTogether,
+)
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
 
 from agenda_igreja.db import test_db_connection
 from agenda_igreja.auth import (
@@ -380,6 +388,146 @@ def df_to_pdf_bytes_a4(df: pd.DataFrame, title: str, subtitle: str):
     return pdf
 
 # =========================
+# NOVO: PDF "Rodízio Semanal" (igual referência do anexo)
+# =========================
+def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date, congregacao_txt: str):
+    """
+    Gera PDF A4 no estilo "rodízio semanal", agrupando por dia da semana e listando os eventos daquele dia.
+    Funciona especificamente para a aba "Todos" na Agenda Pública.
+    """
+    if subdf is None or subdf.empty:
+        return None
+
+    dfp = subdf.copy()
+
+    # normaliza
+    dfp["data"] = pd.to_datetime(dfp["data"]).dt.date
+    dfp["horario_txt"] = dfp["horario"].astype(str).str[:5]
+    dfp = dfp.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=2.0 * cm,
+        rightMargin=2.0 * cm,
+        topMargin=1.6 * cm,
+        bottomMargin=1.6 * cm,
+        title="Rodízio Semanal"
+    )
+
+    base = getSampleStyleSheet()
+    styles = {
+        "h_title": ParagraphStyle(
+            "h_title",
+            parent=base["Title"],
+            fontName="Helvetica-Bold",
+            fontSize=16,
+            leading=18,
+            textColor=colors.HexColor(COLORS["primary"]),
+            spaceAfter=10,
+            alignment=1
+        ),
+        "h_sub": ParagraphStyle(
+            "h_sub",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=10,
+            leading=12,
+            textColor=colors.HexColor(COLORS["secondary"]),
+            alignment=1,
+            spaceAfter=12
+        ),
+        "small_center": ParagraphStyle(
+            "small_center",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=9,
+            leading=11,
+            textColor=colors.HexColor("#334155"),
+            alignment=1,
+            spaceAfter=10
+        ),
+        "day_title": ParagraphStyle(
+            "day_title",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=11,
+            leading=14,
+            textColor=colors.HexColor(COLORS["primary"]),
+            spaceBefore=6,
+            spaceAfter=6
+        ),
+        "ev_line": ParagraphStyle(
+            "ev_line",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=9.5,
+            leading=12,
+            textColor=colors.HexColor("#0f172a"),
+            leftIndent=12,
+            spaceAfter=4
+        ),
+        "ev_meta": ParagraphStyle(
+            "ev_meta",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=9,
+            leading=11,
+            textColor=colors.HexColor("#334155"),
+            leftIndent=22,
+            spaceAfter=3
+        ),
+    }
+
+    story = []
+    story.append(Paragraph("RODÍZIO SEMANAL", styles["h_title"]))
+    story.append(Paragraph(f"PERÍODO DE {_fmt_date_br(monday)} A {_fmt_date_br(sunday)}", styles["h_sub"]))
+    story.append(Paragraph(IGREJA_NOME, styles["small_center"]))
+    if congregacao_txt:
+        story.append(Paragraph(f"Congregação: {congregacao_txt}", styles["small_center"]))
+    story.append(Spacer(1, 6))
+
+    # agrupa por data
+    for d, g in dfp.groupby("data", sort=True):
+        weekday = _weekday_label(d)
+        header = f"{weekday}  {_fmt_date_br(d)}"
+        blocks = [Paragraph(header, styles["day_title"])]
+
+        for _, r in g.iterrows():
+            hora = (r.get("horario_txt") or "").strip()
+            tipo_txt = format_tipo(r.to_dict())
+            congreg = (r.get("congregacao") or "").strip()
+
+            linha = f"• {hora}  {tipo_txt}"
+            if congreg:
+                linha += f"  ({congreg})"
+            blocks.append(Paragraph(linha, styles["ev_line"]))
+
+            dirigentes = join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3"))
+            portaria = join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3"))
+            recepcao = join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3"))
+
+            if dirigentes:
+                blocks.append(Paragraph(f"Dirigentes: {dirigentes}", styles["ev_meta"]))
+            if portaria:
+                blocks.append(Paragraph(f"Portaria: {portaria}", styles["ev_meta"]))
+            if recepcao:
+                blocks.append(Paragraph(f"Recepção: {recepcao}", styles["ev_meta"]))
+
+            sec = (r.get("secretaria") or "").strip()
+            if sec:
+                blocks.append(Paragraph(f"Secretaria: {sec}", styles["ev_meta"]))
+
+        story.append(KeepTogether(blocks))
+        story.append(Spacer(1, 6))
+
+    doc.build(story)
+    pdf = buf.getvalue()
+    buf.close()
+    return pdf
+
+# =========================
 # UI
 # =========================
 def render_topbar():
@@ -671,7 +819,7 @@ def page_agenda_publica():
     df["horario_txt"] = df["horario"].astype(str).str[:5]
     df = df.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
 
-    # NOVO: aba "Todos"
+    # Abas
     tab_todos, tab_culto, tab_ebd, tab_oracao, tab_ensaio = st.tabs(
         ["📌 Todos", "🎵 Cultos", "📚 EBD", "🙏 Oração", "🎤 Ensaios"]
     )
@@ -705,7 +853,28 @@ def page_agenda_publica():
                 st.info(f"{icon} Sem eventos deste tipo nesta semana.")
                 return
 
-            # Tabela (com export PNG/CSV) e Cards
+            # NOVO: botão PDF estilo rodízio SEMPRE disponível na aba Todos
+            if tipo_nome == "Todos":
+                pdf_rodizio = agenda_todos_to_pdf_rodizio(
+                    subdf=sub,
+                    monday=monday,
+                    sunday=sunday,
+                    congregacao_txt=congregacao
+                )
+                col_pdf1, col_pdf2 = st.columns([1, 2])
+                with col_pdf1:
+                    if pdf_rodizio:
+                        st.download_button(
+                            "🧾 Baixar PDF Rodízio (A4)",
+                            data=pdf_rodizio,
+                            file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+                with col_pdf2:
+                    st.caption("Esse PDF sai no formato A4 estilo rodízio semanal, igual o modelo do anexo.")
+
+            # Tabela
             if modo == "Tabela":
                 show = make_table_view(sub)
                 st.dataframe(show, use_container_width=True, hide_index=True)
@@ -734,9 +903,8 @@ def page_agenda_publica():
                         use_container_width=True
                     )
 
-                # NOVO: PDF A4 (principalmente na aba Todos)
+                # Mantém seu PDF tabela (opcional) para quem quiser
                 pdf_df = show.copy()
-                # deixa mais enxuto para caber melhor em A4
                 pdf_df = pdf_df.rename(columns={"Dirigentes": "Dirig.", "Recepção": "Recep."})
                 title = "Agenda da Semana (A4)"
                 subtitle = f"{IGREJA_NOME}<br/>{_fmt_date_br(monday)} até {_fmt_date_br(sunday)}<br/>Congregação: {congregacao}"
@@ -744,9 +912,9 @@ def page_agenda_publica():
                 with colz:
                     if pdf_bytes:
                         st.download_button(
-                            "🧾 Baixar em PDF (A4)",
+                            "🧾 Baixar PDF (Tabela A4)",
                             data=pdf_bytes,
-                            file_name=f"agenda_a4_{monday.strftime('%Y%m%d')}.pdf",
+                            file_name=f"agenda_tabela_a4_{monday.strftime('%Y%m%d')}.pdf",
                             mime="application/pdf",
                             use_container_width=True
                         )
@@ -756,7 +924,6 @@ def page_agenda_publica():
             for _, r in sub.iterrows():
                 _event_card(r.to_dict())
 
-    # Aba Todos
     render_group("Todos", tab_todos, "📌")
     render_group("Culto", tab_culto, "🎵")
     render_group("EBD", tab_ebd, "📚")
