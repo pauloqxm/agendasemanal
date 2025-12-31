@@ -408,7 +408,6 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             return None
 
     def _cat_from_tipo(row: dict) -> str:
-        # Prioriza o campo "tipo" do banco. Se não tiver, tenta inferir pelo texto formatado.
         t = (row.get("tipo") or "").strip()
         if t:
             return t
@@ -483,16 +482,6 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             alignment=1,
             spaceAfter=6
         ),
-        "cat_title": ParagraphStyle(
-            "cat_title",
-            parent=base["Normal"],
-            fontName="Helvetica-Bold",
-            fontSize=13,
-            leading=16,
-            textColor=colors.HexColor(COLORS["accent"]),
-            spaceBefore=10,
-            spaceAfter=8
-        ),
         "day_title": ParagraphStyle(
             "day_title",
             parent=base["Normal"],
@@ -523,13 +512,6 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
             leftIndent=18,
             spaceAfter=2
         ),
-        "spacer": ParagraphStyle(
-            "spacer",
-            parent=base["Normal"],
-            fontSize=6,
-            leading=8,
-            spaceAfter=6
-        )
     }
 
     story = []
@@ -552,31 +534,81 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
     story.append(Paragraph(IGREJA_NOME, styles["small_center"]))
     if congregacao_txt:
         story.append(Paragraph(f"Congregação: {congregacao_txt}", styles["small_center"]))
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 10))
 
-    # Ordem fixa das categorias (igual tua ideia)
+    # Ordem fixa das categorias
     order = ["Culto", "Ensaio", "Oração", "EBD"]
     found = [c for c in order if c in set(dfp["categoria"].tolist())]
     extras = sorted([c for c in dfp["categoria"].unique().tolist() if c not in found])
     categories = found + extras
+
+    # cores por categoria (fundo + linha)
+    cat_colors = {
+        "Culto": {"bg": "#EAF2FF", "line": COLORS["light"]},
+        "EBD": {"bg": "#ECFDF5", "line": COLORS["success"]},
+        "Ensaio": {"bg": "#FFFBEB", "line": COLORS["warning"]},
+        "Oração": {"bg": "#EEF2FF", "line": COLORS["accent"]},
+        "Outros": {"bg": "#F1F5F9", "line": COLORS["secondary"]},
+    }
+
+    def _cat_header(cat_name: str):
+        meta = cat_colors.get(cat_name, cat_colors["Outros"])
+        bg = colors.HexColor(meta["bg"])
+        ln = colors.HexColor(meta["line"])
+
+        title = cat_name.upper()
+
+        # bloco com fundo
+        w = A4[0] - (doc.leftMargin + doc.rightMargin)
+        tbl = Table([[Paragraph(title, ParagraphStyle(
+            f"cat_{title}",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=13.5,
+            leading=16,
+            textColor=colors.HexColor(COLORS["primary"]),
+            leftIndent=4
+        ))]], colWidths=[w])
+
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), bg),
+            ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#CBD5E1")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+
+        # linha colorida logo abaixo
+        line_tbl = Table([[""]], colWidths=[w], rowHeights=[2])
+        line_tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), ln),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+
+        return [Spacer(1, 8), tbl, line_tbl, Spacer(1, 8)]
 
     for cat in categories:
         df_cat = dfp[dfp["categoria"] == cat].copy()
         if df_cat.empty:
             continue
 
-        # Título da categoria
-        story.append(Paragraph(cat, styles["cat_title"]))
+        # Título da categoria (com fundo + linha)
+        story.extend(_cat_header(cat))
 
         # Agrupa por dia
         for d, g in df_cat.groupby("data", sort=True):
             weekday = _weekday_label(d)
             header = f"{weekday}  {_fmt_date_br(d)}"
+
             blocks = [Paragraph(header, styles["day_title"])]
 
             for _, r in g.iterrows():
                 row = r.to_dict()
-
                 blocks.append(Paragraph(_fmt_dt_line(row), styles["ev_line"]))
 
                 dirigentes = _people_line("Dirigentes", row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3"))
@@ -604,9 +636,6 @@ def agenda_todos_to_pdf_rodizio(subdf: pd.DataFrame, monday: date, sunday: date,
     pdf = buf.getvalue()
     buf.close()
     return pdf
-
-
-
 # =========================
 # UI
 # =========================
