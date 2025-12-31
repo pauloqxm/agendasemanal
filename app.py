@@ -1737,6 +1737,8 @@ def main():
 if __name__ == "__main__":
     main()
 
+# Coloque esse link e GF INFORMÁTICA: https://gfinformaticace.com/
+
 # Rodapé
 st.markdown("---")
 
@@ -1773,6 +1775,18 @@ st.markdown("""
     margin-bottom: 0.8rem;
 }
 
+.footer-link {
+    color: #2563eb;
+    text-decoration: none;
+    font-size: 0.85rem;
+    transition: color 0.3s;
+}
+
+.footer-link:hover {
+    color: #1d4ed8;
+    text-decoration: underline;
+}
+
 .footer-copyright {
     color: #999;
     font-size: 0.8rem;
@@ -1790,8 +1804,11 @@ st.markdown("""
         Rua Vereador José Franco, 70 • Centro<br>
         Quixeramobim, Ceará
     </div>
+    <a href="https://gfinformaticace.com/" target="_blank" class="footer-link">
+        Desenvolvido por GF INFORMÁTICA
+    </a>
     <div class="footer-copyright">
-        © 2026 • IADTC • Desenvolvido com Streamlit
+        © 2026 • IADTC • Todos os direitos reservados
     </div>
 </div>
 """, unsafe_allow_html=True)
