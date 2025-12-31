@@ -1089,6 +1089,15 @@ def page_cadastrar_evento():
     edit_id = st.session_state.edit_id
     ev = get_event(edit_id) if edit_id else None
 
+    # Keys estáveis no modo edição, e "resetáveis" no modo novo cadastro
+    if edit_id:
+        nonce = f"edit_{edit_id}"
+    else:
+        nonce = f"new_{st.session_state.get('cadastro_nonce', 0)}"
+
+    def k(name: str) -> str:
+        return f"cad_{nonce}_{name}"
+
     def val(key, default=None):
         if not ev:
             return default
@@ -1109,88 +1118,106 @@ def page_cadastrar_evento():
         if perfil == "SECRETARIO" and vinc:
             allowed_congregs = [vinc]
 
+        # Congregação
         with col1:
             if ev and val("congregacao") in allowed_congregs:
                 congregacao = st.selectbox(
                     "🏛️ Congregação*",
                     allowed_congregs,
                     index=allowed_congregs.index(val("congregacao")),
-                    placeholder="Selecione a congregação"
+                    placeholder="Selecione a congregação",
+                    key=k("congregacao")
                 )
             else:
                 congregacao = st.selectbox(
                     "🏛️ Congregação*",
                     allowed_congregs,
                     index=None,
-                    placeholder="Selecione a congregação"
+                    placeholder="Selecione a congregação",
+                    key=k("congregacao")
                 )
 
+        # Tipo
         with col2:
             if ev and val("tipo") in TIPOS:
                 tipo = st.selectbox(
                     "📌 Tipo da agenda*",
                     TIPOS,
                     index=TIPOS.index(val("tipo")),
-                    placeholder="Escolha o tipo do evento"
+                    placeholder="Escolha o tipo do evento",
+                    key=k("tipo")
                 )
             else:
                 tipo = st.selectbox(
                     "📌 Tipo da agenda*",
                     TIPOS,
                     index=None,
-                    placeholder="Escolha o tipo do evento"
+                    placeholder="Escolha o tipo do evento",
+                    key=k("tipo")
                 )
 
+        # Subtipo / Turma
         with col3:
             subtipo = None
             turma_ebd = None
 
-            if (tipo == "Culto") or (ev and val("tipo") == "Culto" and tipo is None):
-                tipo_eff = tipo or val("tipo")
-                if tipo_eff == "Culto":
-                    options = SUBTIPOS_CULTO
-                    current = val("subtipo")
-                    if ev and current in options:
-                        subtipo = st.selectbox(
-                            "✨ Subtipo do Culto",
-                            options,
-                            index=options.index(current),
-                            placeholder="Selecione (opcional)"
-                        )
-                    else:
-                        subtipo = st.selectbox(
-                            "✨ Subtipo do Culto",
-                            options,
-                            index=None,
-                            placeholder="Selecione (opcional)"
-                        )
+            tipo_eff = tipo or val("tipo")
 
-            if (tipo == "EBD") or (ev and val("tipo") == "EBD" and tipo is None):
-                tipo_eff = tipo or val("tipo")
-                if tipo_eff == "EBD":
-                    options = TURMAS_EBD
-                    current = val("turma_ebd")
-                    if ev and current in options:
-                        turma_ebd = st.selectbox(
-                            "📚 Turma da EBD*",
-                            options,
-                            index=options.index(current),
-                            placeholder="Selecione a turma"
-                        )
-                    else:
-                        turma_ebd = st.selectbox(
-                            "📚 Turma da EBD*",
-                            options,
-                            index=None,
-                            placeholder="Selecione a turma"
-                        )
+            if tipo_eff == "Culto":
+                options = SUBTIPOS_CULTO
+                current = val("subtipo")
+                if ev and current in options:
+                    subtipo = st.selectbox(
+                        "✨ Subtipo do Culto",
+                        options,
+                        index=options.index(current),
+                        placeholder="Selecione (opcional)",
+                        key=k("subtipo")
+                    )
+                else:
+                    subtipo = st.selectbox(
+                        "✨ Subtipo do Culto",
+                        options,
+                        index=None,
+                        placeholder="Selecione (opcional)",
+                        key=k("subtipo")
+                    )
+
+            if tipo_eff == "EBD":
+                options = TURMAS_EBD
+                current = val("turma_ebd")
+                if ev and current in options:
+                    turma_ebd = st.selectbox(
+                        "📚 Turma da EBD*",
+                        options,
+                        index=options.index(current),
+                        placeholder="Selecione a turma",
+                        key=k("turma_ebd")
+                    )
+                else:
+                    turma_ebd = st.selectbox(
+                        "📚 Turma da EBD*",
+                        options,
+                        index=None,
+                        placeholder="Selecione a turma",
+                        key=k("turma_ebd")
+                    )
 
         col4, col5 = st.columns(2)
         with col4:
-            data_evento = st.date_input("📅 Data*", value=val("data", date.today()), format="DD/MM/YYYY")
+            data_evento = st.date_input(
+                "📅 Data*",
+                value=val("data", date.today()),
+                format="DD/MM/YYYY",
+                key=k("data")
+            )
         with col5:
             horario_default = datetime.strptime("19:00", "%H:%M").time()
-            horario = st.time_input("🕖 Horário*", value=val("horario", horario_default))
+            horario = st.time_input(
+                "🕖 Horário*",
+                value=val("horario", horario_default),
+                key=k("horario")
+            )
 
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1199,15 +1226,30 @@ def page_cadastrar_evento():
         st.markdown(f'<h3 style="color: {COLORS["secondary"]};">👥 Equipe do Evento</h3>', unsafe_allow_html=True)
 
         st.markdown("### 👤 Dirigência")
-        dirigente1 = st.text_input("👤 Dirigente", value=val("dirigente1", "") or "", placeholder="Nome do dirigente responsável")
+        dirigente1 = st.text_input(
+            "👤 Dirigente",
+            value=val("dirigente1", "") or "",
+            placeholder="Nome do dirigente responsável",
+            key=k("dirigente1")
+        )
 
-        st.toggle("➕ Adicionar mais dirigentes", key="show_dirigentes_extra")
-        if st.session_state.show_dirigentes_extra:
+        show_dir = st.toggle("➕ Adicionar mais dirigentes", key=k("show_dirigentes_extra"))
+        if show_dir:
             col_d1, col_d2 = st.columns(2)
             with col_d1:
-                dirigente2 = st.text_input("👥 Dirigente 2", value=val("dirigente2", "") or "", placeholder="Nome (opcional)")
+                dirigente2 = st.text_input(
+                    "👥 Dirigente 2",
+                    value=val("dirigente2", "") or "",
+                    placeholder="Nome (opcional)",
+                    key=k("dirigente2")
+                )
             with col_d2:
-                dirigente3 = st.text_input("👥 Dirigente 3", value=val("dirigente3", "") or "", placeholder="Nome (opcional)")
+                dirigente3 = st.text_input(
+                    "👥 Dirigente 3",
+                    value=val("dirigente3", "") or "",
+                    placeholder="Nome (opcional)",
+                    key=k("dirigente3")
+                )
         else:
             dirigente2 = val("dirigente2", "") or ""
             dirigente3 = val("dirigente3", "") or ""
@@ -1215,15 +1257,30 @@ def page_cadastrar_evento():
         st.markdown(f'<div class="divider"></div>', unsafe_allow_html=True)
 
         st.markdown("### 🚪 Portaria")
-        portaria1 = st.text_input("🚪 Portaria", value=val("portaria1", "") or "", placeholder="Nome do responsável pela portaria")
+        portaria1 = st.text_input(
+            "🚪 Portaria",
+            value=val("portaria1", "") or "",
+            placeholder="Nome do responsável pela portaria",
+            key=k("portaria1")
+        )
 
-        st.toggle("➕ Adicionar mais na portaria", key="show_portaria_extra")
-        if st.session_state.show_portaria_extra:
+        show_por = st.toggle("➕ Adicionar mais na portaria", key=k("show_portaria_extra"))
+        if show_por:
             col_p1, col_p2 = st.columns(2)
             with col_p1:
-                portaria2 = st.text_input("🚪 Portaria 2", value=val("portaria2", "") or "", placeholder="Nome (opcional)")
+                portaria2 = st.text_input(
+                    "🚪 Portaria 2",
+                    value=val("portaria2", "") or "",
+                    placeholder="Nome (opcional)",
+                    key=k("portaria2")
+                )
             with col_p2:
-                portaria3 = st.text_input("🚪 Portaria 3", value=val("portaria3", "") or "", placeholder="Nome (opcional)")
+                portaria3 = st.text_input(
+                    "🚪 Portaria 3",
+                    value=val("portaria3", "") or "",
+                    placeholder="Nome (opcional)",
+                    key=k("portaria3")
+                )
         else:
             portaria2 = val("portaria2", "") or ""
             portaria3 = val("portaria3", "") or ""
@@ -1231,23 +1288,49 @@ def page_cadastrar_evento():
         st.markdown(f'<div class="divider"></div>', unsafe_allow_html=True)
 
         st.markdown("### 🤝 Recepção")
-        recepcao1 = st.text_input("🤝 Recepção", value=val("recepcao1", "") or "", placeholder="Nome do responsável pela recepção")
+        recepcao1 = st.text_input(
+            "🤝 Recepção",
+            value=val("recepcao1", "") or "",
+            placeholder="Nome do responsável pela recepção",
+            key=k("recepcao1")
+        )
 
-        st.toggle("➕ Adicionar mais na recepção", key="show_recepcao_extra")
-        if st.session_state.show_recepcao_extra:
+        show_rec = st.toggle("➕ Adicionar mais na recepção", key=k("show_recepcao_extra"))
+        if show_rec:
             col_r1, col_r2 = st.columns(2)
             with col_r1:
-                recepcao2 = st.text_input("🤝 Recepção 2", value=val("recepcao2", "") or "", placeholder="Nome (opcional)")
+                recepcao2 = st.text_input(
+                    "🤝 Recepção 2",
+                    value=val("recepcao2", "") or "",
+                    placeholder="Nome (opcional)",
+                    key=k("recepcao2")
+                )
             with col_r2:
-                recepcao3 = st.text_input("🤝 Recepção 3", value=val("recepcao3", "") or "", placeholder="Nome (opcional)")
+                recepcao3 = st.text_input(
+                    "🤝 Recepção 3",
+                    value=val("recepcao3", "") or "",
+                    placeholder="Nome (opcional)",
+                    key=k("recepcao3")
+                )
         else:
             recepcao2 = val("recepcao2", "") or ""
             recepcao3 = val("recepcao3", "") or ""
 
         st.markdown(f'<div class="divider"></div>', unsafe_allow_html=True)
 
-        secretaria = st.text_input("🗂️ Secretaria", value=val("secretaria", "") or "", placeholder="Nome do responsável (opcional)")
-        observacoes = st.text_area("📝 Observações", value=val("observacoes", "") or "", placeholder="Observações (opcional)", height=90)
+        secretaria = st.text_input(
+            "🗂️ Secretaria",
+            value=val("secretaria", "") or "",
+            placeholder="Nome do responsável (opcional)",
+            key=k("secretaria")
+        )
+        observacoes = st.text_area(
+            "📝 Observações",
+            value=val("observacoes", "") or "",
+            placeholder="Observações (opcional)",
+            height=90,
+            key=k("observacoes")
+        )
 
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1269,7 +1352,7 @@ def page_cadastrar_evento():
         if not tipo:
             st.error("Selecione o Tipo da agenda.")
             return
-        if tipo == "EBD" and not turma_ebd:
+        if (tipo == "EBD") and not turma_ebd:
             st.error("Para EBD, selecione a Turma.")
             return
 
@@ -1293,16 +1376,23 @@ def page_cadastrar_evento():
             "observacoes": (observacoes or "").strip() or None,
         }
 
+        # Edição: mantém fluxo atual
         if edit_id:
             update_event(edit_id, payload)
             st.success("✅ Evento atualizado com sucesso!")
-        else:
-            create_event(payload)
-            st.success("✅ Evento cadastrado com sucesso!")
+            st.session_state.edit_id = None
+            st.session_state.page = "Agenda da Semana"
+            st.rerun()
+
+        # Novo cadastro: permanece na tela e limpa tudo
+        create_event(payload)
+        st.success("✅ Evento cadastrado! Pode cadastrar o próximo.")
 
         st.session_state.edit_id = None
-        st.session_state.page = "Agenda da Semana"
+        st.session_state.page = "Cadastrar Evento"
+        st.session_state.cadastro_nonce = st.session_state.get("cadastro_nonce", 0) + 1
         st.rerun()
+
 
 # =========================
 # Agenda da Semana
