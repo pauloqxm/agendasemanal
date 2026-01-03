@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Optional, Any
+
 from agenda_igreja.db import get_db_connection
 
 
@@ -71,14 +72,14 @@ def create_event(payload: dict, actor_username: str | None = None):
         "criado_por", "atualizado_por"
     ]
 
-    values = [payload.get(c) for c in [
+    base_cols = [
         "congregacao", "tipo", "subtipo", "turma_ebd", "data", "horario",
         "dirigente1", "dirigente2", "dirigente3",
         "portaria1", "portaria2", "portaria3",
         "recepcao1", "recepcao2", "recepcao3",
         "secretaria", "observacoes"
-    ]]
-
+    ]
+    values = [payload.get(c) for c in base_cols]
     values += [actor_username, actor_username]
 
     with get_db_connection() as conn:
@@ -169,7 +170,12 @@ def get_event(event_id: int) -> Optional[dict[str, Any]]:
     return dict(zip(keys, row))
 
 
-def list_events_between(dt_ini: date, dt_fim: date, congregacao: str | None = None, tipo: str | None = None):
+def list_events_between(
+    dt_ini: date,
+    dt_fim: date,
+    congregacao: str | None = None,
+    tipo: str | None = None
+):
     where = ["data >= %s", "data <= %s"]
     params = [dt_ini, dt_fim]
 
@@ -209,7 +215,6 @@ def list_events_between(dt_ini: date, dt_fim: date, congregacao: str | None = No
         "criado_em", "atualizado_em",
         "criado_por", "atualizado_por"
     ]
-
     return [dict(zip(keys, r)) for r in rows]
 
 
@@ -267,5 +272,64 @@ def users_audit_summary():
             "criados": int(r[1] or 0),
             "editados": int(r[2] or 0),
             "ultima_edicao": r[3]
+        })
+    return out
+
+
+def users_audit_summary_with_ids(limit_ids: int = 12):
+    """
+    Resumo para tela de Usuários com IDs dos eventos criados/editados.
+    Retorna: username, criados, ids_criados, editados, ids_editados, ultima_edicao
+    """
+    sql = """
+        WITH
+        criados AS (
+            SELECT
+                criado_por AS username,
+                COUNT(*) AS total_criados,
+                ARRAY_AGG(id ORDER BY id DESC) AS ids_criados
+            FROM eventos
+            WHERE criado_por IS NOT NULL AND criado_por <> ''
+            GROUP BY 1
+        ),
+        editados AS (
+            SELECT
+                atualizado_por AS username,
+                COUNT(*) AS total_editados,
+                ARRAY_AGG(id ORDER BY id DESC) AS ids_editados,
+                MAX(atualizado_em) AS ultima_edicao
+            FROM eventos
+            WHERE atualizado_por IS NOT NULL AND atualizado_por <> ''
+            GROUP BY 1
+        )
+        SELECT
+            COALESCE(c.username, e.username) AS username,
+            COALESCE(c.total_criados, 0) AS criados,
+            COALESCE(c.ids_criados, ARRAY[]::int[]) AS ids_criados,
+            COALESCE(e.total_editados, 0) AS editados,
+            COALESCE(e.ids_editados, ARRAY[]::int[]) AS ids_editados,
+            e.ultima_edicao
+        FROM criados c
+        FULL OUTER JOIN editados e
+            ON c.username = e.username
+        ORDER BY editados DESC, criados DESC, username ASC;
+    """
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            rows = cur.fetchall()
+
+    out = []
+    for r in rows:
+        ids_c = list(r[2] or [])
+        ids_e = list(r[4] or [])
+        out.append({
+            "username": r[0],
+            "criados": int(r[1] or 0),
+            "ids_criados": ids_c[:limit_ids],
+            "editados": int(r[3] or 0),
+            "ids_editados": ids_e[:limit_ids],
+            "ultima_edicao": r[5]
         })
     return out
