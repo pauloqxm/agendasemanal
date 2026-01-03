@@ -9,7 +9,20 @@ CONGREGACOES = [
     "Pompéia",
     "Sabonete",
     "Depósito",
-]
+    "Algodões",
+    "Boa Esperança",
+    "Canafístula",
+    "Cipó",
+    "Cupim",
+    "Fogareiro",
+    "Mearim",
+    "Pedreiras",
+    "Pontal Alegre",
+    "Quinin",
+    "São João Velho",
+    "Tanquinhos",
+    "Uruquê"
+    ]
 
 TIPOS = ["Culto", "Oração", "Ensaio", "EBD"]
 
@@ -29,7 +42,7 @@ SUBTIPOS_CULTO = [
     "Louvor e adoração",
 ]
 
-TURMAS_EBD = ["Jardim de Infância", "Pré-adolescentes", "Adultos"]
+TURMAS_EBD = ["Maternal", "Jardim de Infância", "Pré-adolescentes", "Juniores", "Jovens", "Adultos"]
 
 def format_tipo(row: dict) -> str:
     t = row.get("tipo") or ""
