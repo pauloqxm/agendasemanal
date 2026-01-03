@@ -1393,7 +1393,7 @@ def page_cadastrar_evento():
             label_2 = "📚 Professor(a) 2"
             label_3 = "📚 Professor(a) 3"
         else:
-            titulo_secao = "### 👤 Dirigência"
+            titulo_secao = "### 👤 Dirigente"
             label_base = "👤 Dirigente"
             placeholder_base = "Nome do dirigente responsável"
             toggle_txt = "➕ Adicionar mais dirigentes"
