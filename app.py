@@ -1357,27 +1357,54 @@ def page_cadastrar_evento():
         st.markdown('<div class="modern-card">', unsafe_allow_html=True)
         st.markdown(f'<h3 style="color: {COLORS["secondary"]};">👥 Equipe do Evento</h3>', unsafe_allow_html=True)
 
-        st.markdown("### 👤 Dirigência")
+        # ======================================================
+        # Dirigência / Regência / Docência (dinâmico pelo tipo)
+        # ======================================================
+        tipo_eff_equipes = tipo or val("tipo")
+
+        if tipo_eff_equipes == "Ensaio":
+            titulo_secao = "### 🎼 Regência"
+            label_base = "🎼 Regente"
+            placeholder_base = "Nome do regente responsável"
+            toggle_txt = "➕ Adicionar mais regentes"
+            label_2 = "🎼 Regente 2"
+            label_3 = "🎼 Regente 3"
+        elif tipo_eff_equipes == "EBD":
+            titulo_secao = "### 📚 Docência"
+            label_base = "📚 Professor(a)"
+            placeholder_base = "Nome do(a) professor(a) responsável"
+            toggle_txt = "➕ Adicionar mais professores(as)"
+            label_2 = "📚 Professor(a) 2"
+            label_3 = "📚 Professor(a) 3"
+        else:
+            titulo_secao = "### 👤 Dirigência"
+            label_base = "👤 Dirigente"
+            placeholder_base = "Nome do dirigente responsável"
+            toggle_txt = "➕ Adicionar mais dirigentes"
+            label_2 = "👥 Dirigente 2"
+            label_3 = "👥 Dirigente 3"
+
+        st.markdown(titulo_secao)
         dirigente1 = st.text_input(
-            "👤 Dirigente",
+            label_base,
             value=val("dirigente1", "") or "",
-            placeholder="Nome do dirigente responsável",
+            placeholder=placeholder_base,
             key=k("dirigente1")
         )
 
-        show_dir = st.toggle("➕ Adicionar mais dirigentes", key=k("show_dirigentes_extra"))
+        show_dir = st.toggle(toggle_txt, key=k("show_dirigentes_extra"))
         if show_dir:
             col_d1, col_d2 = st.columns(2)
             with col_d1:
                 dirigente2 = st.text_input(
-                    "👥 Dirigente 2",
+                    label_2,
                     value=val("dirigente2", "") or "",
                     placeholder="Nome (opcional)",
                     key=k("dirigente2")
                 )
             with col_d2:
                 dirigente3 = st.text_input(
-                    "👥 Dirigente 3",
+                    label_3,
                     value=val("dirigente3", "") or "",
                     placeholder="Nome (opcional)",
                     key=k("dirigente3")
@@ -1525,7 +1552,6 @@ def page_cadastrar_evento():
         st.session_state.cadastro_nonce = st.session_state.get("cadastro_nonce", 0) + 1
         st.rerun()
 
-    
 
 
 # =========================
