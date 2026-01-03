@@ -40,6 +40,9 @@ SUBTIPOS_CULTO = [
     "Em residência",
     "Cruzada",
     "Louvor e adoração",
+    "Congresso",
+    "Unificado",
+    "Outro",
 ]
 
 TURMAS_EBD = ["Maternal", "Jardim de Infância", "Pré-adolescentes", "Juniores", "Jovens", "Adultos"]
