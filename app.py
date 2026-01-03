@@ -20,7 +20,7 @@ from reportlab.lib.units import cm
 from reportlab.platypus import Image as RLImage
 from urllib.request import urlopen
 
-from agenda_igreja.db import test_db_connection
+from agenda_igreja.db import test_db_connection, get_db_connection
 from agenda_igreja.auth import (
     init_auth,
     authenticate,
@@ -37,8 +37,7 @@ from agenda_igreja.events import (
     update_event,
     delete_event,
     get_event,
-    list_events_between,
-    users_audit_summary
+    list_events_between
 )
 from agenda_igreja.ui import (
     CONGREGACOES,
@@ -355,6 +354,161 @@ def _labels_dirigencia(tipo: str):
         return ("Professor(a)", "Professores(as)")
     return ("Dirigente", "Dirigentes")
 
+def _responsavel_text(ev: dict) -> str:
+    sing, plur = _labels_dirigencia(ev.get("tipo"))
+    nomes = [ev.get("dirigente1"), ev.get("dirigente2"), ev.get("dirigente3")]
+    nomes_ok = [n.strip() for n in nomes if isinstance(n, str) and n.strip()]
+    if not nomes_ok:
+        return ""
+    label = sing if len(nomes_ok) == 1 else plur
+    return f"{label}: {', '.join(nomes_ok)}"
+
+# =========================
+# Auditoria (Resumo por usuário + IDs)
+# =========================
+def _table_exists(table_name: str) -> bool:
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema='public' AND table_name=%s
+                    );
+                    """,
+                    (table_name,),
+                )
+                return bool(cur.fetchone()[0])
+    except Exception:
+        return False
+
+def _column_exists(table_name: str, column_name: str) -> bool:
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema='public' AND table_name=%s AND column_name=%s
+                    );
+                    """,
+                    (table_name, column_name),
+                )
+                return bool(cur.fetchone()[0])
+    except Exception:
+        return False
+
+def users_audit_with_event_ids():
+    # 1) tabela eventos_auditoria (se existir)
+    if _table_exists("eventos_auditoria"):
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT
+                            actor_username AS username,
+                            COUNT(*) FILTER (WHERE action='CREATE') AS criados,
+                            COUNT(*) FILTER (WHERE action='UPDATE') AS editados,
+                            MAX(created_at) AS ultima_edicao,
+                            ARRAY_AGG(DISTINCT evento_id) FILTER (WHERE action='CREATE') AS ids_criados,
+                            ARRAY_AGG(DISTINCT evento_id) FILTER (WHERE action='UPDATE') AS ids_editados
+                        FROM eventos_auditoria
+                        GROUP BY actor_username
+                        ORDER BY MAX(created_at) DESC NULLS LAST, actor_username ASC;
+                        """
+                    )
+                    rows = cur.fetchall()
+
+            out = []
+            for r in rows:
+                out.append({
+                    "username": r[0],
+                    "criados": int(r[1] or 0),
+                    "editados": int(r[2] or 0),
+                    "ultima_edicao": r[3],
+                    "ids_criados": r[4] or [],
+                    "ids_editados": r[5] or [],
+                })
+            return out
+        except Exception:
+            pass
+
+    # 2) colunas criado_por / atualizado_por (se existirem)
+    has_criado_por = _column_exists("eventos", "criado_por")
+    has_atualizado_por = _column_exists("eventos", "atualizado_por")
+    if has_criado_por or has_atualizado_por:
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    created_rows = []
+                    updated_rows = []
+
+                    if has_criado_por:
+                        cur.execute(
+                            """
+                            SELECT
+                                criado_por AS username,
+                                COUNT(*) AS criados,
+                                ARRAY_AGG(id ORDER BY id) AS ids_criados,
+                                MAX(criado_em) AS max_criado_em
+                            FROM eventos
+                            WHERE criado_por IS NOT NULL AND criado_por <> ''
+                            GROUP BY criado_por;
+                            """
+                        )
+                        created_rows = cur.fetchall()
+
+                    if has_atualizado_por:
+                        cur.execute(
+                            """
+                            SELECT
+                                atualizado_por AS username,
+                                COUNT(*) AS editados,
+                                ARRAY_AGG(id ORDER BY id) AS ids_editados,
+                                MAX(atualizado_em) AS max_atualizado_em
+                            FROM eventos
+                            WHERE atualizado_por IS NOT NULL AND atualizado_por <> ''
+                            GROUP BY atualizado_por;
+                            """
+                        )
+                        updated_rows = cur.fetchall()
+
+            by_user = {}
+
+            for u, criados, ids, max_dt in created_rows:
+                by_user.setdefault(u, {"username": u, "criados": 0, "editados": 0, "ultima_edicao": None, "ids_criados": [], "ids_editados": []})
+                by_user[u]["criados"] = int(criados or 0)
+                by_user[u]["ids_criados"] = ids or []
+                if max_dt and (by_user[u]["ultima_edicao"] is None or max_dt > by_user[u]["ultima_edicao"]):
+                    by_user[u]["ultima_edicao"] = max_dt
+
+            for u, editados, ids, max_dt in updated_rows:
+                by_user.setdefault(u, {"username": u, "criados": 0, "editados": 0, "ultima_edicao": None, "ids_criados": [], "ids_editados": []})
+                by_user[u]["editados"] = int(editados or 0)
+                by_user[u]["ids_editados"] = ids or []
+                if max_dt and (by_user[u]["ultima_edicao"] is None or max_dt > by_user[u]["ultima_edicao"]):
+                    by_user[u]["ultima_edicao"] = max_dt
+
+            out = list(by_user.values())
+            out.sort(
+                key=lambda x: (
+                    x["ultima_edicao"] is None,
+                    x["ultima_edicao"] or datetime(1970, 1, 1),
+                    x["username"]
+                ),
+                reverse=True
+            )
+            return out
+        except Exception:
+            pass
+
+    return []
+
 def df_to_pdf_bytes_a4(df: pd.DataFrame, title: str, subtitle: str):
     if df is None or df.empty:
         return None
@@ -437,6 +591,14 @@ def agenda_todos_to_pdf_rodizio(
             if cand in txt:
                 return cand
         return "Outros"
+
+    def _labels_dirigencia_pdf(tipo: str):
+        t = (tipo or "").strip()
+        if t == "Ensaio":
+            return ("Regente", "Regentes")
+        if t == "EBD":
+            return ("Professor(a)", "Professores(as)")
+        return ("Dirigente", "Dirigentes")
 
     def _people_line_dyn(label_sing: str, label_plur: str, *names) -> str:
         val = join_people(*names)
@@ -637,14 +799,14 @@ def agenda_todos_to_pdf_rodizio(
                 row = r.to_dict()
                 flows.append(Paragraph(_fmt_dt_line(row), styles["ev_line"]))
 
-                lab_s, lab_p = _labels_dirigencia(row.get("tipo") or cat)
+                lab_s, lab_p = _labels_dirigencia_pdf(row.get("tipo") or cat)
 
-                pessoas = _people_line_dyn(lab_s, lab_p, row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3"))
+                dirigentes = _people_line_dyn(lab_s, lab_p, row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3"))
                 portaria = _people_line_dyn("Portaria", "Portaria", row.get("portaria1"), row.get("portaria2"), row.get("portaria3"))
                 recepcao = _people_line_dyn("Recepção", "Recepção", row.get("recepcao1"), row.get("recepcao2"), row.get("recepcao3"))
 
-                if pessoas:
-                    flows.append(Paragraph(_html_escape(pessoas), styles["ev_meta"]))
+                if dirigentes:
+                    flows.append(Paragraph(_html_escape(dirigentes), styles["ev_meta"]))
                 if portaria:
                     flows.append(Paragraph(_html_escape(portaria), styles["ev_meta"]))
                 if recepcao:
@@ -716,6 +878,7 @@ def agenda_todos_to_pdf_rodizio(
             continue
 
         weight = len(flows)
+
         if sum_l <= sum_r:
             left.extend(flows)
             sum_l += weight
@@ -800,7 +963,6 @@ def init_state():
     st.session_state.setdefault("show_dirigentes_extra", False)
     st.session_state.setdefault("show_portaria_extra", False)
     st.session_state.setdefault("show_recepcao_extra", False)
-    st.session_state.setdefault("cadastro_nonce", 0)
 
 def render_page_tabs():
     if not st.session_state.auth_ok:
@@ -837,7 +999,6 @@ def _event_card(ev: dict):
     hora_txt = escape(_fmt_time_hhmm(ev.get("horario")))
     congreg = escape(ev.get("congregacao") or "")
 
-    tipo_raw = (ev.get("tipo") or "").strip()
     tipo_txt = escape(format_tipo(ev) or "")
     subtipo = escape(ev.get("subtipo") or "")
     turma = escape(ev.get("turma_ebd") or "")
@@ -850,12 +1011,13 @@ def _event_card(ev: dict):
     if ev.get("secretaria"):
         badges += f'<span class="badge badge-primary">📋 {escape(ev.get("secretaria") or "")}</span>'
 
-    pessoas = escape(join_people(ev.get("dirigente1"), ev.get("dirigente2"), ev.get("dirigente3")) or "")
+    # rótulo dinâmico
+    sing, plur = _labels_dirigencia(ev.get("tipo"))
+    resp_label = plur  # no card fica bonito em plural
+    resp_val = escape(join_people(ev.get("dirigente1"), ev.get("dirigente2"), ev.get("dirigente3")) or "")
+
     portaria = escape(join_people(ev.get("portaria1"), ev.get("portaria2"), ev.get("portaria3")) or "")
     recepcao = escape(join_people(ev.get("recepcao1"), ev.get("recepcao2"), ev.get("recepcao3")) or "")
-
-    lab_s, lab_p = _labels_dirigencia(tipo_raw)
-    label_pessoas = lab_p
 
     obs = escape((ev.get("observacoes") or "").strip())
     obs_html = ""
@@ -884,8 +1046,8 @@ def _event_card(ev: dict):
 
           <div style="margin:12px 0;">
             <div style="font-size:0.95rem; margin-bottom:4px;">
-              <span style="font-weight:700; color:{COLORS['secondary']};">👤 {label_pessoas}</span>
-              <span style="color:{COLORS['text']}; margin-left:8px;">{pessoas or "Não informado"}</span>
+              <span style="font-weight:700; color:{COLORS['secondary']};">👤 {escape(resp_label)}</span>
+              <span style="color:{COLORS['text']}; margin-left:8px;">{resp_val or "Não informado"}</span>
             </div>
             <div style="font-size:0.95rem; margin-bottom:4px;">
               <span style="font-weight:700; color:{COLORS['secondary']};">🚪 Portaria</span>
@@ -1031,12 +1193,14 @@ def page_agenda_publica():
     col1, col2, col3 = st.columns([1.2, 1, 0.8])
     with col1:
         ref = st.date_input("📆 Semana de referência", value=date.today(), format="DD/MM/YYYY")
+    monday, sunday = week_bounds(ref)
+    with col1:
+        st.caption(f"{_fmt_date_br(monday)} - {_fmt_date_br(sunday)}")
+
     with col2:
         congregacao = st.selectbox("🏛️ Congregação", ["Todas"] + CONGREGACOES)
     with col3:
         modo = st.selectbox("👁️ Exibição", ["Cards", "Tabela"], index=0)
-
-    monday, sunday = week_bounds(ref)
 
     st.markdown(
         f"""
@@ -1082,10 +1246,8 @@ def page_agenda_publica():
         view["Horário"] = view["horario_txt"]
         view["Tipo"] = view.apply(lambda r: format_tipo(r.to_dict()), axis=1)
 
-        view["Equipe"] = view.apply(
-            lambda r: join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3")), axis=1
-        )
-        view["Função"] = view["tipo"].apply(lambda t: _labels_dirigencia(t)[1])
+        # ✅ rótulo certo por linha
+        view["Responsável"] = view.apply(lambda r: _responsavel_text(r.to_dict()), axis=1)
 
         view["Portaria"] = view.apply(
             lambda r: join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3")), axis=1
@@ -1098,9 +1260,10 @@ def page_agenda_publica():
 
         show = view[[
             "Dia", "Data", "Horário", "congregacao", "Tipo",
-            "Função", "Equipe", "Portaria", "Recepção",
+            "Responsável", "Portaria", "Recepção",
             "secretaria", "Observações"
-        ]].rename(columns={"congregacao": "Congregação", "secretaria": "Secretaria"})
+        ]]
+        show = show.rename(columns={"congregacao": "Congregação", "secretaria": "Secretaria"})
         return show
 
     def render_group(tipo_nome: str, container, icon: str):
@@ -1146,7 +1309,7 @@ def page_agenda_publica():
                         st.code("pip install pymupdf", language="bash")
 
                 with c3:
-                    st.caption("Escolha o formato e baixe")
+                    st.caption("Escolha um formato e baixe.")
 
             if modo == "Tabela":
                 show = make_table_view(sub)
@@ -1406,7 +1569,7 @@ def page_cadastrar_evento():
             dirigente2 = val("dirigente2", "") or ""
             dirigente3 = val("dirigente3", "") or ""
 
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="divider"></div>', unsafe_allow_html=True)
 
         st.markdown("### 🚪 Portaria")
         portaria1 = st.text_input(
@@ -1437,7 +1600,7 @@ def page_cadastrar_evento():
             portaria2 = val("portaria2", "") or ""
             portaria3 = val("portaria3", "") or ""
 
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="divider"></div>', unsafe_allow_html=True)
 
         st.markdown("### 🤝 Recepção")
         recepcao1 = st.text_input(
@@ -1468,7 +1631,7 @@ def page_cadastrar_evento():
             recepcao2 = val("recepcao2", "") or ""
             recepcao3 = val("recepcao3", "") or ""
 
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="divider"></div>', unsafe_allow_html=True)
 
         secretaria = st.text_input(
             "🗂️ Secretaria",
@@ -1528,16 +1691,14 @@ def page_cadastrar_evento():
             "observacoes": (observacoes or "").strip() or None,
         }
 
-        actor = (st.session_state.user or {}).get("username") or (st.session_state.user or {}).get("nome")
-
         if edit_id:
-            update_event(edit_id, payload, actor_username=actor)
+            update_event(edit_id, payload)
             st.success("✅ Evento atualizado com sucesso!")
             st.session_state.edit_id = None
             st.session_state.page = "Agenda da Semana"
             st.rerun()
 
-        create_event(payload, actor_username=actor)
+        create_event(payload)
         st.success("✅ Evento cadastrado! Pode cadastrar o próximo.")
 
         st.session_state.edit_id = None
@@ -1563,15 +1724,15 @@ def page_agenda_semana():
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        ref = st.date_input("Semana de referência", value=date.today(), format="DD/MM/YYYY")
+        ref = st.date_input("📆 Semana de referência", value=date.today(), format="DD/MM/YYYY")
     monday, sunday = week_bounds(ref)
+    with col1:
+        st.caption(f"{_fmt_date_br(monday)} - {_fmt_date_br(sunday)}")
 
     with col2:
         congregacao = st.selectbox("Congregação", ["Todas"] + CONGREGACOES)
     with col3:
         tipo = st.selectbox("Tipo", ["Todos"] + TIPOS)
-
-    st.caption(f"{_fmt_date_br(monday)} - {_fmt_date_br(sunday)}")
 
     eventos = list_events_between(
         monday,
@@ -1589,20 +1750,15 @@ def page_agenda_semana():
     df["Horário"] = df["horario"].astype(str).str[:5]
     df["Tipo"] = df.apply(lambda r: format_tipo(r.to_dict()), axis=1)
 
-    df["Equipe"] = df.apply(lambda r: join_people(r.dirigente1, r.dirigente2, r.dirigente3), axis=1)
-    df["Função"] = df["tipo"].apply(lambda t: _labels_dirigencia(t)[1])
-
+    df["Responsável"] = df.apply(lambda r: _responsavel_text(r.to_dict()), axis=1)
     df["Portaria"] = df.apply(lambda r: join_people(r.portaria1, r.portaria2, r.portaria3), axis=1)
     df["Recepção"] = df.apply(lambda r: join_people(r.recepcao1, r.recepcao2, r.recepcao3), axis=1)
 
     df["Observações"] = df.get("observacoes", "").fillna("").astype(str)
 
-    view = df[[
-        "Data", "Horário", "congregacao", "Tipo",
-        "Função", "Equipe",
-        "Portaria", "Recepção",
-        "secretaria", "Observações"
-    ]].rename(columns={"congregacao": "Congregação", "secretaria": "Secretaria"})
+    view = df[["Data", "Horário", "congregacao", "Tipo", "Responsável", "Portaria", "Recepção", "secretaria", "Observações"]].rename(
+        columns={"congregacao": "Congregação", "secretaria": "Secretaria"}
+    )
 
     st.dataframe(view, use_container_width=True, hide_index=True)
 
@@ -1747,19 +1903,29 @@ def page_usuarios():
 
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown("### 📌 Resumo de ações nos eventos")
 
-        audit = users_audit_summary()
+        audit = users_audit_with_event_ids()
         if not audit:
-            st.info("Ainda não há registros de ações nos eventos.")
+            st.info("Sem auditoria de eventos detectada. Se você quiser, eu adapto para gravar isso automaticamente no banco.")
         else:
             df_a = pd.DataFrame(audit)
+
             if "ultima_edicao" in df_a.columns:
                 df_a["Última edição"] = pd.to_datetime(df_a["ultima_edicao"]).dt.strftime("%d/%m/%Y %H:%M")
                 df_a = df_a.drop(columns=["ultima_edicao"])
-            else:
-                df_a["Última edição"] = ""
+
+            def _ids_to_text(v):
+                if not isinstance(v, (list, tuple)) or len(v) == 0:
+                    return ""
+                head = v[:12]
+                txt = ", ".join([str(x) for x in head])
+                if len(v) > 12:
+                    txt += f" … (+{len(v)-12})"
+                return txt
+
+            df_a["IDs criados"] = df_a.get("ids_criados", []).apply(_ids_to_text) if "ids_criados" in df_a.columns else ""
+            df_a["IDs editados"] = df_a.get("ids_editados", []).apply(_ids_to_text) if "ids_editados" in df_a.columns else ""
 
             df_a = df_a.rename(columns={
                 "username": "Usuário",
@@ -1767,10 +1933,26 @@ def page_usuarios():
                 "editados": "Eventos editados",
             })
 
-            st.dataframe(df_a, use_container_width=True, hide_index=True)
+            cols_show = ["Usuário", "Eventos criados", "IDs criados", "Eventos editados", "IDs editados", "Última edição"]
+            cols_show = [c for c in cols_show if c in df_a.columns]
+            st.dataframe(df_a[cols_show], use_container_width=True, hide_index=True)
 
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        st.markdown("### ⚙️ Ações no usuário")
+            st.markdown("#### 🔎 Ver IDs completos por usuário")
+            for row in audit:
+                u = row.get("username", "")
+                ids_c = row.get("ids_criados") or []
+                ids_e = row.get("ids_editados") or []
+                with st.expander(f"{u} | criados {len(ids_c)} | editados {len(ids_e)}"):
+                    if ids_c:
+                        st.write("IDs criados")
+                        st.code(", ".join([str(x) for x in ids_c]))
+                    else:
+                        st.caption("Sem IDs criados registrados.")
+                    if ids_e:
+                        st.write("IDs editados")
+                        st.code(", ".join([str(x) for x in ids_e]))
+                    else:
+                        st.caption("Sem IDs editados registrados.")
 
         ids = df["ID"].tolist()
         sel = st.selectbox("Selecione o usuário pelo ID", ids)
@@ -1797,6 +1979,75 @@ def page_usuarios():
                     st.rerun()
 
 # =========================
+# Footer
+# =========================
+def render_footer():
+    st.markdown("---")
+    st.markdown("""
+    <style>
+    .simple-footer {
+        text-align: center;
+        padding: 1rem 0;
+        color: #555;
+    }
+    .simple-footer-logo {
+        height: 50px;
+        margin-bottom: 0.5rem;
+    }
+    .footer-title {
+        font-size: 1.2rem;
+        font-weight: 700;
+        color: #333;
+        margin-bottom: 0.3rem;
+    }
+    .footer-subtitle {
+        color: #666;
+        font-size: 0.9rem;
+        margin-bottom: 0.8rem;
+    }
+    .footer-address {
+        color: #777;
+        font-size: 0.85rem;
+        line-height: 1.4;
+        margin-bottom: 0.8rem;
+    }
+    .footer-link {
+        color: #2563eb;
+        text-decoration: none;
+        font-size: 0.85rem;
+        transition: color 0.3s;
+    }
+    .footer-link:hover {
+        color: #1d4ed8;
+        text-decoration: underline;
+    }
+    .footer-copyright {
+        color: #999;
+        font-size: 0.8rem;
+        border-top: 1px solid #eee;
+        padding-top: 0.8rem;
+        margin-top: 0.8rem;
+    }
+    </style>
+
+    <div class="simple-footer">
+        <img src="https://i.ibb.co/jZkYm687/logo-adtce.jpg" alt="Logo IADTC" class="simple-footer-logo">
+        <div class="footer-title">Agenda da Igreja</div>
+        <div class="footer-subtitle">Igreja Assembleia de Deus - Templo Central</div>
+        <div class="footer-address">
+            Rua Vereador José Franco, 70 • Centro<br>
+            Quixeramobim, Ceará
+        </div>
+        <a href="https://gfinformaticace.com/" target="_blank" class="footer-link">
+            Desenvolvido por GF INFORMÁTICA
+        </a>
+        <div class="footer-copyright">
+            © 2026 • IADTC • Todos os direitos reservados
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# =========================
 # Main
 # =========================
 def main():
@@ -1813,15 +2064,18 @@ def main():
 
     if page == "Agenda Pública":
         page_agenda_publica()
+        render_footer()
         return
 
     if page == "Login":
         page_login()
+        render_footer()
         return
 
     if not st.session_state.auth_ok:
         st.warning("🔒 Você precisa estar logado para acessar esta área.")
         page_login()
+        render_footer()
         return
 
     if page == "Cadastrar Evento":
@@ -1833,79 +2087,7 @@ def main():
     else:
         page_agenda_semana()
 
+    render_footer()
+
 if __name__ == "__main__":
     main()
-
-# Rodapé
-st.markdown("---")
-
-st.markdown("""
-<style>
-.simple-footer {
-    text-align: center;
-    padding: 1rem 0;
-    color: #555;
-}
-
-.simple-footer-logo {
-    height: 50px;
-    margin-bottom: 0.5rem;
-}
-
-.footer-title {
-    font-size: 1.2rem;
-    font-weight: 700;
-    color: #333;
-    margin-bottom: 0.3rem;
-}
-
-.footer-subtitle {
-    color: #666;
-    font-size: 0.9rem;
-    margin-bottom: 0.8rem;
-}
-
-.footer-address {
-    color: #777;
-    font-size: 0.85rem;
-    line-height: 1.4;
-    margin-bottom: 0.8rem;
-}
-
-.footer-link {
-    color: #2563eb;
-    text-decoration: none;
-    font-size: 0.85rem;
-    transition: color 0.3s;
-}
-
-.footer-link:hover {
-    color: #1d4ed8;
-    text-decoration: underline;
-}
-
-.footer-copyright {
-    color: #999;
-    font-size: 0.8rem;
-    border-top: 1px solid #eee;
-    padding-top: 0.8rem;
-    margin-top: 0.8rem;
-}
-</style>
-
-<div class="simple-footer">
-    <img src="https://i.ibb.co/jZkYm687/logo-adtce.jpg" alt="Logo IADTC" class="simple-footer-logo">
-    <div class="footer-title">Agenda da Igreja</div>
-    <div class="footer-subtitle">Igreja Assembleia de Deus - Templo Central</div>
-    <div class="footer-address">
-        Rua Vereador José Franco, 70 • Centro<br>
-        Quixeramobim, Ceará
-    </div>
-    <a href="https://gfinformaticace.com/" target="_blank" class="footer-link">
-        Desenvolvido por GF INFORMÁTICA
-    </a>
-    <div class="footer-copyright">
-        © 2026 • IADTC • Todos os direitos reservados
-    </div>
-</div>
-""", unsafe_allow_html=True)
