@@ -429,6 +429,25 @@ def agenda_todos_to_pdf_rodizio(
                 return cand
         return "Outros"
 
+    # ✅ NOVO: rótulo dinâmico para "dirigência" conforme o tipo
+    def _labels_dirigencia(tipo: str):
+        t = (tipo or "").strip()
+        if t == "Ensaio":
+            return ("Regente", "Regentes")
+        if t == "EBD":
+            return ("Professor(a)", "Professores(as)")
+        return ("Dirigente", "Dirigentes")
+
+    # ✅ NOVO: monta linha de pessoas com singular/plural automático
+    def _people_line_dyn(label_sing: str, label_plur: str, *names) -> str:
+        # usa sua função join_people para manter padrão
+        val = join_people(*names)
+        if not val:
+            return ""
+        qtd = len([n for n in names if isinstance(n, str) and n.strip()])
+        label = label_sing if qtd == 1 else label_plur
+        return f"{label}: {val}"
+
     def _fmt_dt_line(row: dict) -> str:
         hora = (str(row.get("horario"))[:5] if row.get("horario") else "").strip()
         tipo_txt = (format_tipo(row) or "").strip()
@@ -449,12 +468,6 @@ def agenda_todos_to_pdf_rodizio(
                 "</font>"
             )
         return line
-
-    def _people_line(label: str, *names) -> str:
-        val = join_people(*names)
-        if not val:
-            return ""
-        return f"{label}: {val}"
 
     # ===== Normaliza DF =====
     dfp = subdf.copy()
@@ -631,9 +644,12 @@ def agenda_todos_to_pdf_rodizio(
                 row = r.to_dict()
                 flows.append(Paragraph(_fmt_dt_line(row), styles["ev_line"]))
 
-                dirigentes = _people_line("Dirigentes", row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3"))
-                portaria = _people_line("Portaria", row.get("portaria1"), row.get("portaria2"), row.get("portaria3"))
-                recepcao = _people_line("Recepção", row.get("recepcao1"), row.get("recepcao2"), row.get("recepcao3"))
+                # ✅ AQUI: troca Dirigentes por Regentes/Professores(as) conforme tipo
+                lab_s, lab_p = _labels_dirigencia(row.get("tipo") or cat)
+
+                dirigentes = _people_line_dyn(lab_s, lab_p, row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3"))
+                portaria = _people_line_dyn("Portaria", "Portaria", row.get("portaria1"), row.get("portaria2"), row.get("portaria3"))
+                recepcao = _people_line_dyn("Recepção", "Recepção", row.get("recepcao1"), row.get("recepcao2"), row.get("recepcao3"))
 
                 if dirigentes:
                     flows.append(Paragraph(_html_escape(dirigentes), styles["ev_meta"]))
