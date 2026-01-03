@@ -30,6 +30,7 @@ SUBTIPOS_CULTO = [
     "Doutrina",
     "Santa Ceia",
     "Oficial",
+    "Evangelístico",
     "Missões",
     "Jovens",
     "Família",
