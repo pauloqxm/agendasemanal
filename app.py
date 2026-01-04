@@ -37,7 +37,7 @@ from agenda_igreja.events import (
     delete_event,
     get_event,
     list_events_between,
-    users_audit_summary_with_ids
+    users_audit_summary
 )
 from agenda_igreja.ui import (
     CONGREGACOES,
@@ -94,6 +94,7 @@ def apply_css():
         border-right: none;
     }}
 
+    /* Tabs */
     .stTabs [data-baseweb="tab-list"] {{
         gap: 8px;
         background-color: {COLORS['background']};
@@ -119,6 +120,7 @@ def apply_css():
         font-weight: 600;
     }}
 
+    /* Cards */
     .modern-card {{
         background: {COLORS['card']};
         border: 1px solid #E2E8F0;
@@ -144,6 +146,7 @@ def apply_css():
         border-left: 4px solid {COLORS['light']};
     }}
 
+    /* Destaque do dia da semana */
     .weekday-pill {{
         display: inline-flex;
         align-items: center;
@@ -158,6 +161,7 @@ def apply_css():
         text-transform: uppercase;
     }}
 
+    /* Botões */
     .stButton > button {{
         border-radius: 10px;
         font-weight: 600;
@@ -179,11 +183,11 @@ def apply_css():
         border: 2px solid {COLORS['primary']};
     }}
 
+    /* Inputs como card */
     div[data-testid="stDateInput"],
     div[data-testid="stSelectbox"],
     div[data-testid="stTimeInput"],
-    div[data-testid="stTextInput"],
-    div[data-testid="stTextArea"] {{
+    div[data-testid="stTextInput"] {{
       background: #FFFFFF;
       border: 1px solid #E2E8F0;
       border-radius: 16px;
@@ -194,13 +198,13 @@ def apply_css():
     div[data-testid="stDateInput"] label,
     div[data-testid="stSelectbox"] label,
     div[data-testid="stTimeInput"] label,
-    div[data-testid="stTextInput"] label,
-    div[data-testid="stTextArea"] label {{
+    div[data-testid="stTextInput"] label {{
       margin-bottom: 8px !important;
       font-weight: 600 !important;
       color: #1A202C !important;
     }}
 
+    /* Topbar */
     .topbar {{
         background: linear-gradient(135deg, {COLORS['primary']} 0%, {COLORS['secondary']} 100%);
         border-radius: 16px;
@@ -248,6 +252,7 @@ def apply_css():
         color: rgba(255, 255, 255, 0.9);
     }}
 
+    /* Badges */
     .badge {{
         display: inline-flex;
         align-items: center;
@@ -273,11 +278,6 @@ def apply_css():
     .badge-warning {{
         background: rgba(214, 158, 46, 0.1);
         color: {COLORS['warning']};
-    }}
-
-    .badge-muted {{
-        background: rgba(2, 6, 23, 0.05);
-        color: #334155;
     }}
 
     .status-indicator {{
@@ -464,12 +464,14 @@ def agenda_todos_to_pdf_rodizio(
             )
         return line
 
+    # ===== Normaliza DF =====
     dfp = subdf.copy()
     dfp["data"] = pd.to_datetime(dfp["data"]).dt.date
     dfp["horario_txt"] = dfp["horario"].astype(str).str[:5]
     dfp["categoria"] = dfp.apply(lambda r: _cat_from_tipo(r.to_dict()), axis=1)
     dfp = dfp.sort_values(["categoria", "data", "horario_txt", "congregacao"], ascending=True)
 
+    # ===== estilos =====
     base = getSampleStyleSheet()
     styles = {
         "h_title": ParagraphStyle(
@@ -578,7 +580,7 @@ def agenda_todos_to_pdf_rodizio(
         txt = (text or "").strip()
         if not txt:
             return None
-        p = Paragraph(f"Congregação. {_html_escape(txt)}", styles["badge_center"])
+        p = Paragraph(f"{_html_escape(txt)}", styles["badge_center"])
         t = Table([[p]], colWidths=[doc_width])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#DBEAFE")),
@@ -637,19 +639,9 @@ def agenda_todos_to_pdf_rodizio(
                 flows.append(Paragraph(_fmt_dt_line(row), styles["ev_line"]))
 
                 lab_s, lab_p = _labels_dirigencia(row.get("tipo") or cat)
-
-                dirigentes = _people_line_dyn(
-                    lab_s, lab_p,
-                    row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3")
-                )
-                portaria = _people_line_dyn(
-                    "Portaria", "Portaria",
-                    row.get("portaria1"), row.get("portaria2"), row.get("portaria3")
-                )
-                recepcao = _people_line_dyn(
-                    "Recepção", "Recepção",
-                    row.get("recepcao1"), row.get("recepcao2"), row.get("recepcao3")
-                )
+                dirigentes = _people_line_dyn(lab_s, lab_p, row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3"))
+                portaria = _people_line_dyn("Portaria", "Portaria", row.get("portaria1"), row.get("portaria2"), row.get("portaria3"))
+                recepcao = _people_line_dyn("Recepção", "Recepção", row.get("recepcao1"), row.get("recepcao2"), row.get("recepcao3"))
 
                 if dirigentes:
                     flows.append(Paragraph(_html_escape(dirigentes), styles["ev_meta"]))
@@ -672,6 +664,7 @@ def agenda_todos_to_pdf_rodizio(
         flows.append(Spacer(1, 8))
         return flows
 
+    # ===== Monta PDF =====
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
@@ -698,7 +691,7 @@ def agenda_todos_to_pdf_rodizio(
             pass
 
     story.append(Paragraph("RODÍZIO SEMANAL", styles["h_title"]))
-    story.append(Paragraph(f"PERÍODO DE {_fmt_date_br(monday)} A {_fmt_date_br(sunday)}", styles["h_sub"]))
+    story.append(Paragraph(f"PERÍODO. {_fmt_date_br(monday)} - {_fmt_date_br(sunday)}", styles["h_sub"]))
     story.append(Paragraph(IGREJA_NOME, styles["small_center"]))
 
     page_w = A4[0]
@@ -722,7 +715,6 @@ def agenda_todos_to_pdf_rodizio(
         flows = _build_category_flowables(cat, col_w)
         if not flows:
             continue
-
         weight = len(flows)
         if sum_l <= sum_r:
             left.extend(flows)
@@ -804,7 +796,10 @@ def init_state():
     st.session_state.setdefault("user", None)
     st.session_state.setdefault("page", "Agenda Pública")
     st.session_state.setdefault("edit_id", None)
-    st.session_state.setdefault("cadastro_nonce", 0)
+
+    st.session_state.setdefault("show_dirigentes_extra", False)
+    st.session_state.setdefault("show_portaria_extra", False)
+    st.session_state.setdefault("show_recepcao_extra", False)
 
 def render_page_tabs():
     if not st.session_state.auth_ok:
@@ -843,6 +838,7 @@ def _event_card(ev: dict):
 
     tipo_raw = (ev.get("tipo") or "").strip()
     tipo_txt = escape(format_tipo(ev) or "")
+
     subtipo = escape(ev.get("subtipo") or "")
     turma = escape(ev.get("turma_ebd") or "")
 
@@ -854,10 +850,8 @@ def _event_card(ev: dict):
     if ev.get("secretaria"):
         badges += f'<span class="badge badge-primary">📋 {escape(ev.get("secretaria") or "")}</span>'
 
-    lab_s, lab_p = _labels_dirigencia(tipo_raw)
-    label_equipes = lab_p
-
-    dirigentes = escape(join_people(ev.get("dirigente1"), ev.get("dirigente2"), ev.get("dirigente3")) or "")
+    dir_s, dir_p = _labels_dirigencia(tipo_raw)
+    nomes_dir = escape(join_people(ev.get("dirigente1"), ev.get("dirigente2"), ev.get("dirigente3")) or "")
     portaria = escape(join_people(ev.get("portaria1"), ev.get("portaria2"), ev.get("portaria3")) or "")
     recepcao = escape(join_people(ev.get("recepcao1"), ev.get("recepcao2"), ev.get("recepcao3")) or "")
 
@@ -888,8 +882,8 @@ def _event_card(ev: dict):
 
           <div style="margin:12px 0;">
             <div style="font-size:0.95rem; margin-bottom:4px;">
-              <span style="font-weight:700; color:{COLORS['secondary']};">👤 {escape(label_equipes)}</span>
-              <span style="color:{COLORS['text']}; margin-left:8px;">{dirigentes or "Não informado"}</span>
+              <span style="font-weight:700; color:{COLORS['secondary']};">👤 {escape(dir_p)}</span>
+              <span style="color:{COLORS['text']}; margin-left:8px;">{nomes_dir or "Não informado"}</span>
             </div>
             <div style="font-size:0.95rem; margin-bottom:4px;">
               <span style="font-weight:700; color:{COLORS['secondary']};">🚪 Portaria</span>
@@ -1032,19 +1026,23 @@ def page_agenda_publica():
         unsafe_allow_html=True
     )
 
-    c1, c2, c3 = st.columns([1.2, 1.2, 1.2])
-    with c1:
+    col1, col2, col3 = st.columns([1.2, 1, 1.1])
+    with col1:
         ref = st.date_input("📆 Semana de referência", value=date.today(), format="DD/MM/YYYY")
-    with c2:
-        congregacao = st.selectbox("🏛️ Congregação", ["Todas"] + CONGREGACOES)
-    with c3:
-        subtipo_filtro = st.selectbox(
-            "🎯 Subtipo do Culto",
-            ["Todos"] + SUBTIPOS_CULTO,
-            index=0
-        )
-
     monday, sunday = week_bounds(ref)
+    with col1:
+        st.caption(f"{_fmt_date_br(monday)} - {_fmt_date_br(sunday)}")
+
+    with col2:
+        congregacao = st.selectbox("🏛️ Congregação", ["Todas"] + CONGREGACOES)
+
+    with col3:
+        subtipo_filtro = st.selectbox("🎯 Subtipo do Culto", ["Todos"] + SUBTIPOS_CULTO)
+
+    # badge do topo vira o nome do filtro quando filtrar
+    badge_top = congregacao
+    if subtipo_filtro != "Todos":
+        badge_top = f"Filtro. {subtipo_filtro}"
 
     st.markdown(
         f"""
@@ -1056,7 +1054,7 @@ def page_agenda_publica():
                 {_fmt_date_br(monday)} - {_fmt_date_br(sunday)}
               </p>
             </div>
-            <span class="badge badge-primary">{congregacao}</span>
+            <span class="badge badge-primary">{badge_top}</span>
           </div>
         </div>
         """,
@@ -1079,28 +1077,29 @@ def page_agenda_publica():
     df["horario_txt"] = df["horario"].astype(str).str[:5]
     df = df.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
 
-    # filtro de subtipo apenas para Culto (e só filtra se escolher algo diferente de Todos)
-    if subtipo_filtro and subtipo_filtro != "Todos":
-        df = df[
-            (df["tipo"] == "Culto") &
-            (df["subtipo"].fillna("").astype(str) == str(subtipo_filtro))
-        ].copy()
+    # aplica filtro de subtipo (só mexe nos Cultos; demais tipos continuam aparecendo)
+    if subtipo_filtro != "Todos":
+        df = df[(df["tipo"] != "Culto") | (df["subtipo"].fillna("") == subtipo_filtro)].copy()
 
+    # Abas principais
     tab_todos, tab_culto, tab_ebd, tab_oracao, tab_ensaio = st.tabs(
         ["📌 Todos", "🎵 Cultos", "📚 EBD", "🙏 Oração", "🎤 Ensaios"]
     )
 
     def make_table_view(subdf: pd.DataFrame) -> pd.DataFrame:
         view = subdf.copy()
-        view["ID"] = view.get("id")
         view["Dia"] = view["data"].apply(lambda x: _weekday_label(x))
         view["Data"] = view["data"].apply(lambda x: x.strftime("%d/%m/%Y"))
         view["Horário"] = view["horario_txt"]
         view["Tipo"] = view.apply(lambda r: format_tipo(r.to_dict()), axis=1)
 
-        view["Dirigentes"] = view.apply(
-            lambda r: join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3")), axis=1
-        )
+        # rótulo dinâmico na tabela
+        def _dyn_people(r):
+            lab_s, lab_p = _labels_dirigencia(r.get("tipo"))
+            return _people_line_dyn(lab_s, lab_p, r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3"))
+
+        view["Dirigência"] = view.apply(_dyn_people, axis=1)
+
         view["Portaria"] = view.apply(
             lambda r: join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3")), axis=1
         )
@@ -1111,90 +1110,88 @@ def page_agenda_publica():
         view["Observações"] = view.get("observacoes", "").fillna("").astype(str)
 
         show = view[[
-            "ID", "Dia", "Data", "Horário", "congregacao", "Tipo",
-            "Dirigentes", "Portaria", "Recepção",
+            "Dia", "Data", "Horário", "congregacao", "Tipo",
+            "Dirigência", "Portaria", "Recepção",
             "secretaria", "Observações"
         ]]
         show = show.rename(columns={"congregacao": "Congregação", "secretaria": "Secretaria"})
         return show
 
+    def render_exports_todos(subdf: pd.DataFrame):
+        # Exportações SEMPRE visíveis na aba TODOS
+        pdf_rodizio, png_rodizio = agenda_todos_to_pdf_rodizio(
+            subdf=subdf,
+            monday=monday,
+            sunday=sunday,
+            congregacao_txt=badge_top,  # agora mostra o filtro quando ativo
+            return_png=True
+        )
+
+        c1, c2, c3 = st.columns([1, 1, 2])
+        with c1:
+            if pdf_rodizio:
+                st.download_button(
+                    "🧾 Baixar PDF",
+                    data=pdf_rodizio,
+                    file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+        with c2:
+            if png_rodizio:
+                st.download_button(
+                    "🖼️ Baixar PNG",
+                    data=png_rodizio,
+                    file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.png",
+                    mime="image/png",
+                    use_container_width=True
+                )
+            else:
+                st.caption("Para liberar o PNG, instala PyMuPDF.")
+                st.code("pip install pymupdf", language="bash")
+        with c3:
+            st.caption("Baixe o rodízio no formato que você preferir.")
+
+        st.divider()
+
     def render_group(tipo_nome: str, container, icon: str):
         with container:
             sub = df if tipo_nome == "Todos" else df[df["tipo"] == tipo_nome].copy()
-
-            # Se escolheu subtipo, e a aba não é Culto nem Todos, esvazia para ficar coerente
-            if subtipo_filtro != "Todos" and tipo_nome not in ["Todos", "Culto"]:
-                sub = sub.iloc[0:0].copy()
 
             if sub.empty:
                 st.info(f"{icon} Sem eventos deste tipo nesta semana.")
                 return
 
-            # PDF rodízio só faz sentido no "Todos" sem filtro de subtipo
-            if tipo_nome == "Todos" and (subtipo_filtro == "Todos"):
-                pdf_rodizio, png_rodizio = agenda_todos_to_pdf_rodizio(
-                    subdf=sub,
-                    monday=monday,
-                    sunday=sunday,
-                    congregacao_txt=congregacao,
-                    return_png=True
-                )
+            # Na aba TODOS, exportações ficam sempre visíveis
+            if tipo_nome == "Todos":
+                render_exports_todos(sub)
 
-                c1, c2, c3 = st.columns([1, 1, 2])
+            # Tabs internas: Cards / Tabela (sem precisar do filtro “Exibição”)
+            t_cards, t_table = st.tabs(["🧩 Cards", "🧾 Tabela"])
 
-                with c1:
-                    if pdf_rodizio:
-                        st.download_button(
-                            "🧾 Baixar PDF",
-                            data=pdf_rodizio,
-                            file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.pdf",
-                            mime="application/pdf",
-                            use_container_width=True
-                        )
-
-                with c2:
-                    if png_rodizio:
-                        st.download_button(
-                            "🖼️ Baixar PNG",
-                            data=png_rodizio,
-                            file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.png",
-                            mime="image/png",
-                            use_container_width=True
-                        )
-                    else:
-                        st.caption("Para liberar o PNG, instala PyMuPDF.")
-                        st.code("pip install pymupdf", language="bash")
-
-                with c3:
-                    st.caption("PDF e PNG em formato A4, pronto para imprimir.")
-
-            # Cards sempre (sem modo tabela aqui)
-            for _, r in sub.iterrows():
-                _event_card(r.to_dict())
-
-            # tabela/exports em expander (pra não poluir)
-            with st.expander("📄 Ver em tabela e exportar", expanded=False):
+            with t_table:
                 show = make_table_view(sub)
                 st.dataframe(show, use_container_width=True, hide_index=True)
 
+                colx, coly, colz = st.columns(3)
+
                 png = df_to_png_bytes(
                     show,
-                    title=f"{tipo_nome} • {_fmt_date_br(monday)} a {_fmt_date_br(sunday)}"
+                    title=f"{tipo_nome} • {_fmt_date_br(monday)} - {_fmt_date_br(sunday)}"
                 )
-
-                colx, coly, colz = st.columns(3)
                 with colx:
                     if png:
                         st.download_button(
-                            "💾 Exportar em PNG",
+                            "💾 Exportar PNG (Tabela)",
                             data=png,
                             file_name=f"agenda_{tipo_nome.lower()}_{monday.strftime('%Y%m%d')}.png",
                             mime="image/png",
                             use_container_width=True
                         )
+
                 with coly:
                     st.download_button(
-                        "📄 Exportar em CSV",
+                        "📄 Exportar CSV",
                         data=show.to_csv(index=False).encode("utf-8"),
                         file_name=f"agenda_{tipo_nome.lower()}_{monday.strftime('%Y%m%d')}.csv",
                         mime="text/csv",
@@ -1202,9 +1199,9 @@ def page_agenda_publica():
                     )
 
                 pdf_df = show.copy()
-                pdf_df = pdf_df.rename(columns={"Dirigentes": "Dirig.", "Recepção": "Recep.", "Observações": "Obs."})
+                pdf_df = pdf_df.rename(columns={"Recepção": "Recep.", "Observações": "Obs."})
                 title = "Agenda da Semana (A4)"
-                subtitle = f"{IGREJA_NOME}<br/>{_fmt_date_br(monday)} - {_fmt_date_br(sunday)}<br/>Congregação: {congregacao}"
+                subtitle = f"{IGREJA_NOME}<br/>{_fmt_date_br(monday)} - {_fmt_date_br(sunday)}<br/>{badge_top}"
                 pdf_bytes = df_to_pdf_bytes_a4(pdf_df, title=title, subtitle=subtitle)
                 with colz:
                     if pdf_bytes:
@@ -1215,6 +1212,10 @@ def page_agenda_publica():
                             mime="application/pdf",
                             use_container_width=True
                         )
+
+            with t_cards:
+                for _, r in sub.iterrows():
+                    _event_card(r.to_dict())
 
     render_group("Todos", tab_todos, "📌")
     render_group("Culto", tab_culto, "🎵")
@@ -1243,7 +1244,10 @@ def page_cadastrar_evento():
     edit_id = st.session_state.edit_id
     ev = get_event(edit_id) if edit_id else None
 
-    nonce = f"edit_{edit_id}" if edit_id else f"new_{st.session_state.get('cadastro_nonce', 0)}"
+    if edit_id:
+        nonce = f"edit_{edit_id}"
+    else:
+        nonce = f"new_{st.session_state.get('cadastro_nonce', 0)}"
 
     def k(name: str) -> str:
         return f"cad_{nonce}_{name}"
@@ -1425,7 +1429,7 @@ def page_cadastrar_evento():
             dirigente2 = val("dirigente2", "") or ""
             dirigente3 = val("dirigente3", "") or ""
 
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="divider"></div>', unsafe_allow_html=True)
 
         st.markdown("### 🚪 Portaria")
         portaria1 = st.text_input(
@@ -1456,7 +1460,7 @@ def page_cadastrar_evento():
             portaria2 = val("portaria2", "") or ""
             portaria3 = val("portaria3", "") or ""
 
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="divider"></div>', unsafe_allow_html=True)
 
         st.markdown("### 🤝 Recepção")
         recepcao1 = st.text_input(
@@ -1487,7 +1491,7 @@ def page_cadastrar_evento():
             recepcao2 = val("recepcao2", "") or ""
             recepcao3 = val("recepcao3", "") or ""
 
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="divider"></div>', unsafe_allow_html=True)
 
         secretaria = st.text_input(
             "🗂️ Secretaria",
@@ -1583,14 +1587,13 @@ def page_agenda_semana():
     col1, col2, col3 = st.columns(3)
     with col1:
         ref = st.date_input("Semana de referência", value=date.today(), format="DD/MM/YYYY")
-    monday, sunday = week_bounds(ref)
+        monday, sunday = week_bounds(ref)
+        st.caption(f"{_fmt_date_br(monday)} - {_fmt_date_br(sunday)}")
 
     with col2:
         congregacao = st.selectbox("Congregação", ["Todas"] + CONGREGACOES)
     with col3:
         tipo = st.selectbox("Tipo", ["Todos"] + TIPOS)
-
-    st.caption(f"Período: {_fmt_date_br(monday)} - {_fmt_date_br(sunday)}")
 
     eventos = list_events_between(
         monday,
@@ -1604,22 +1607,23 @@ def page_agenda_semana():
         return
 
     df = pd.DataFrame(eventos)
-    df["ID"] = df.get("id")
     df["Data"] = pd.to_datetime(df["data"]).dt.strftime("%d/%m/%Y")
     df["Horário"] = df["horario"].astype(str).str[:5]
     df["Tipo"] = df.apply(lambda r: format_tipo(r.to_dict()), axis=1)
 
-    df["Dirigente"] = df.apply(lambda r: join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3")), axis=1)
+    def _dyn_people_row(r):
+        lab_s, lab_p = _labels_dirigencia(r.get("tipo"))
+        return join_people(r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3"))
+
+    # coluna única (visual limpo)
+    df["Dirigência"] = df.apply(lambda r: _dyn_people_row(r), axis=1)
     df["Portaria"] = df.apply(lambda r: join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3")), axis=1)
     df["Recepção"] = df.apply(lambda r: join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3")), axis=1)
-
     df["Observações"] = df.get("observacoes", "").fillna("").astype(str)
 
-    view = df[[
-        "ID", "Data", "Horário", "congregacao", "Tipo",
-        "Dirigente", "Portaria", "Recepção",
-        "secretaria", "Observações"
-    ]].rename(columns={"congregacao": "Congregação", "secretaria": "Secretaria"})
+    view = df[["Data", "Horário", "congregacao", "Tipo", "Dirigência", "Portaria", "Recepção", "secretaria", "Observações"]].rename(
+        columns={"congregacao": "Congregação", "secretaria": "Secretaria"}
+    )
 
     st.dataframe(view, use_container_width=True, hide_index=True)
 
@@ -1676,12 +1680,12 @@ def page_gerenciar_eventos():
     colA, colB = st.columns(2)
     with colA:
         if st.button("✏️ Editar", use_container_width=True, type="primary"):
-            st.session_state.edit_id = selected
+            st.session_state.edit_id = int(selected)
             st.session_state.page = "Cadastrar Evento"
             st.rerun()
     with colB:
         if st.button("🗑️ Excluir", use_container_width=True, type="secondary"):
-            delete_event(selected)
+            delete_event(int(selected))
             st.success("✅ Evento excluído com sucesso!")
             st.rerun()
 
@@ -1705,14 +1709,14 @@ def page_usuarios():
         st.error("❌ Acesso negado. Esta área é somente para ADMIN.")
         return
 
-    tab1, tab2, tab3 = st.tabs(["➕ Cadastrar usuário", "📋 Gerenciar usuários", "📌 Resumo de ações"])
+    tab1, tab2, tab3 = st.tabs(["➕ Cadastrar usuário", "📋 Gerenciar usuários", "🧾 Auditoria"])
 
     with tab1:
         col1, col2 = st.columns(2)
         with col1:
             nome = st.text_input("👤 Nome*", placeholder="Nome completo")
         with col2:
-            username = st.text_input("🆔 Usuário*", placeholder="Ex: joao.silva")
+            username = st.text_input("🆔 Usuário*", placeholder="Ex. joao.silva")
 
         col3, col4 = st.columns(2)
         with col3:
@@ -1789,37 +1793,35 @@ def page_usuarios():
                     st.rerun()
 
     with tab3:
-        audit = users_audit_summary_with_ids(limit_ids=12)
+        st.markdown(
+            f"""
+            <div class="modern-card">
+              <h3 style="margin:0; color:{COLORS['primary']};">🧾 Quem alterou o quê</h3>
+              <p style="margin:6px 0 0 0; color:{COLORS['text_light']};">
+                Resumo por usuário, com total de eventos criados e editados.
+              </p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        audit = users_audit_summary()
         if not audit:
-            st.info("Sem dados de ações nos eventos ainda.")
+            st.info("Sem dados de auditoria ainda. Começa a aparecer depois que cria/edita eventos logado.")
         else:
-            df_a = pd.DataFrame(audit)
-
-            df_a["Última edição"] = pd.to_datetime(df_a["ultima_edicao"]).dt.strftime("%d/%m/%Y %H:%M")
-            df_a.drop(columns=["ultima_edicao"], inplace=True)
-
-            def _ids_to_text(v):
-                if not isinstance(v, (list, tuple)) or len(v) == 0:
-                    return ""
-                return ", ".join([str(x) for x in v])
-
-            df_a["IDs criados"] = df_a["ids_criados"].apply(_ids_to_text)
-            df_a["IDs editados"] = df_a["ids_editados"].apply(_ids_to_text)
-
-            df_a = df_a.rename(columns={
+            adf = pd.DataFrame(audit)
+            if "ultima_edicao" in adf.columns:
+                adf["ultima_edicao"] = pd.to_datetime(adf["ultima_edicao"]).dt.strftime("%d/%m/%Y %H:%M").fillna("")
+            adf = adf.rename(columns={
                 "username": "Usuário",
-                "criados": "Eventos criados",
-                "editados": "Eventos editados",
+                "criados": "Criados",
+                "editados": "Editados",
+                "ultima_edicao": "Última edição",
             })
-
-            st.dataframe(
-                df_a[["Usuário", "Eventos criados", "IDs criados", "Eventos editados", "IDs editados", "Última edição"]],
-                use_container_width=True,
-                hide_index=True
-            )
+            st.dataframe(adf, use_container_width=True, hide_index=True)
 
 # =========================
-# Rodapé
+# Footer
 # =========================
 def render_footer():
     st.markdown("---")
