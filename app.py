@@ -1086,10 +1086,7 @@ def page_agenda_publica():
     df["horario_txt"] = df["horario"].astype(str).str[:5]
     df = df.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
 
-    # Filtro de subtipo: só mexe no Culto, os outros continuam
-    if subtipo_filtro != "Todos":
-        df = df[(df["tipo"] != "Culto") | (df["subtipo"].fillna("") == subtipo_filtro)].copy()
-
+   
     tab_todos, tab_culto, tab_ebd, tab_oracao, tab_ensaio = st.tabs(
         ["📌 Todos", "🎵 Cultos", "📚 EBD", "🙏 Oração", "🎤 Ensaios"]
     )
@@ -1137,27 +1134,37 @@ def page_agenda_publica():
             st.caption("Rodízio em A4, pronto para imprimir.")
         st.divider()
 
+#==|====
+
     def render_group(tipo_nome: str, container):
         with container:
-            sub = df if tipo_nome == "Todos" else df[df["tipo"] == tipo_nome].copy()
-
+            # ✅ regra: na aba TODOS, quando o filtro estiver ativo,
+            # mostra SOMENTE os eventos filtrados (Culto + Subtipo).
+            if tipo_nome == "Todos":
+                if subtipo_filtro != "Todos":
+                    sub = df[
+                        (df["tipo"] == "Culto") &
+                        (df["subtipo"].fillna("") == subtipo_filtro)
+                    ].copy()
+                else:
+                    sub = df.copy()
+            else:
+                sub = df[df["tipo"] == tipo_nome].copy()
+    
+                # ✅ extra: na aba "Cultos", também aplica o subtipo se estiver ativo
+                if tipo_nome == "Culto" and subtipo_filtro != "Todos":
+                    sub = sub[sub["subtipo"].fillna("") == subtipo_filtro].copy()
+    
             if sub.empty:
                 st.info("Sem eventos nesta semana.")
                 return
-
-            # Botões só no TODOS, sempre visíveis mesmo com filtro
+    
+            # ✅ Botões só no TODOS, e agora exportam o que está filtrado
             if tipo_nome == "Todos":
                 render_exports_todos(sub)
-
-            # Só cards
+    
             for _, r in sub.iterrows():
                 _event_card(r.to_dict())
-
-    render_group("Todos", tab_todos)
-    render_group("Culto", tab_culto)
-    render_group("EBD", tab_ebd)
-    render_group("Oração", tab_oracao)
-    render_group("Ensaio", tab_ensaio)
 
 
 
