@@ -1027,6 +1027,7 @@ def page_agenda_publica():
     )
 
     col1, col2, col3 = st.columns([1.2, 1, 1.1])
+
     with col1:
         ref = st.date_input("📆 Semana de referência", value=date.today(), format="DD/MM/YYYY")
     monday, sunday = week_bounds(ref)
@@ -1039,7 +1040,6 @@ def page_agenda_publica():
     with col3:
         subtipo_filtro = st.selectbox("🎯 Subtipo do Culto", ["Todos"] + SUBTIPOS_CULTO)
 
-    # badge do topo vira o nome do filtro quando filtrar
     badge_top = congregacao
     if subtipo_filtro != "Todos":
         badge_top = f"Filtro. {subtipo_filtro}"
@@ -1077,11 +1077,10 @@ def page_agenda_publica():
     df["horario_txt"] = df["horario"].astype(str).str[:5]
     df = df.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
 
-    # aplica filtro de subtipo (só mexe nos Cultos; demais tipos continuam aparecendo)
+    # filtro por subtipo só afeta Culto, os outros continuam
     if subtipo_filtro != "Todos":
         df = df[(df["tipo"] != "Culto") | (df["subtipo"].fillna("") == subtipo_filtro)].copy()
 
-    # Abas principais
     tab_todos, tab_culto, tab_ebd, tab_oracao, tab_ensaio = st.tabs(
         ["📌 Todos", "🎵 Cultos", "📚 EBD", "🙏 Oração", "🎤 Ensaios"]
     )
@@ -1093,41 +1092,33 @@ def page_agenda_publica():
         view["Horário"] = view["horario_txt"]
         view["Tipo"] = view.apply(lambda r: format_tipo(r.to_dict()), axis=1)
 
-        # rótulo dinâmico na tabela
         def _dyn_people(r):
             lab_s, lab_p = _labels_dirigencia(r.get("tipo"))
             return _people_line_dyn(lab_s, lab_p, r.get("dirigente1"), r.get("dirigente2"), r.get("dirigente3"))
 
         view["Dirigência"] = view.apply(_dyn_people, axis=1)
-
-        view["Portaria"] = view.apply(
-            lambda r: join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3")), axis=1
-        )
-        view["Recepção"] = view.apply(
-            lambda r: join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3")), axis=1
-        )
-
+        view["Portaria"] = view.apply(lambda r: join_people(r.get("portaria1"), r.get("portaria2"), r.get("portaria3")), axis=1)
+        view["Recepção"] = view.apply(lambda r: join_people(r.get("recepcao1"), r.get("recepcao2"), r.get("recepcao3")), axis=1)
         view["Observações"] = view.get("observacoes", "").fillna("").astype(str)
 
         show = view[[
             "Dia", "Data", "Horário", "congregacao", "Tipo",
             "Dirigência", "Portaria", "Recepção",
             "secretaria", "Observações"
-        ]]
-        show = show.rename(columns={"congregacao": "Congregação", "secretaria": "Secretaria"})
+        ]].rename(columns={"congregacao": "Congregação", "secretaria": "Secretaria"})
         return show
 
     def render_exports_todos(subdf: pd.DataFrame):
-        # Exportações SEMPRE visíveis na aba TODOS
         pdf_rodizio, png_rodizio = agenda_todos_to_pdf_rodizio(
             subdf=subdf,
             monday=monday,
             sunday=sunday,
-            congregacao_txt=badge_top,  # agora mostra o filtro quando ativo
+            congregacao_txt=badge_top,
             return_png=True
         )
 
         c1, c2, c3 = st.columns([1, 1, 2])
+
         with c1:
             if pdf_rodizio:
                 st.download_button(
@@ -1135,8 +1126,10 @@ def page_agenda_publica():
                     data=pdf_rodizio,
                     file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.pdf",
                     mime="application/pdf",
-                    use_container_width=True
+                    use_container_width=True,
+                    key=f"dl_pdf_rodizio_{monday.strftime('%Y%m%d')}_{badge_top}"
                 )
+
         with c2:
             if png_rodizio:
                 st.download_button(
@@ -1144,62 +1137,59 @@ def page_agenda_publica():
                     data=png_rodizio,
                     file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.png",
                     mime="image/png",
-                    use_container_width=True
+                    use_container_width=True,
+                    key=f"dl_png_rodizio_{monday.strftime('%Y%m%d')}_{badge_top}"
                 )
             else:
                 st.caption("Para liberar o PNG, instala PyMuPDF.")
                 st.code("pip install pymupdf", language="bash")
-        with c3:
-            st.caption("Baixe o rodízio no formato que você preferir.")
 
+        with c3:
+            st.caption("Rodízio em A4, pronto para imprimir.")
         st.divider()
 
-    def render_group(tipo_nome: str, container, icon: str):
+    def render_group(tipo_nome: str, container):
         with container:
             sub = df if tipo_nome == "Todos" else df[df["tipo"] == tipo_nome].copy()
 
             if sub.empty:
-                st.info(f"{icon} Sem eventos deste tipo nesta semana.")
+                st.info("Sem eventos nesta semana.")
                 return
 
-            # Na aba TODOS, exportações ficam sempre visíveis
+            # Export só em TODOS (evita duplicidade e fica mais limpo)
             if tipo_nome == "Todos":
                 render_exports_todos(sub)
 
-            # Tabs internas: Cards / Tabela (sem precisar do filtro “Exibição”)
-            t_cards, t_table = st.tabs(["🧩 Cards", "🧾 Tabela"])
-
-            with t_table:
+                # Tabela geral logo abaixo
                 show = make_table_view(sub)
                 st.dataframe(show, use_container_width=True, hide_index=True)
 
+                # Exports da tabela com KEYS únicos
                 colx, coly, colz = st.columns(3)
 
-                png = df_to_png_bytes(
-                    show,
-                    title=f"{tipo_nome} • {_fmt_date_br(monday)} - {_fmt_date_br(sunday)}"
-                )
+                png = df_to_png_bytes(show, title=f"Todos • {_fmt_date_br(monday)} - {_fmt_date_br(sunday)}")
                 with colx:
                     if png:
                         st.download_button(
                             "💾 Exportar PNG (Tabela)",
                             data=png,
-                            file_name=f"agenda_{tipo_nome.lower()}_{monday.strftime('%Y%m%d')}.png",
+                            file_name=f"agenda_todos_{monday.strftime('%Y%m%d')}.png",
                             mime="image/png",
-                            use_container_width=True
+                            use_container_width=True,
+                            key=f"dl_png_tabela_todos_{monday.strftime('%Y%m%d')}_{badge_top}"
                         )
 
                 with coly:
                     st.download_button(
                         "📄 Exportar CSV",
                         data=show.to_csv(index=False).encode("utf-8"),
-                        file_name=f"agenda_{tipo_nome.lower()}_{monday.strftime('%Y%m%d')}.csv",
+                        file_name=f"agenda_todos_{monday.strftime('%Y%m%d')}.csv",
                         mime="text/csv",
-                        use_container_width=True
+                        use_container_width=True,
+                        key=f"dl_csv_todos_{monday.strftime('%Y%m%d')}_{badge_top}"
                     )
 
-                pdf_df = show.copy()
-                pdf_df = pdf_df.rename(columns={"Recepção": "Recep.", "Observações": "Obs."})
+                pdf_df = show.rename(columns={"Recepção": "Recep.", "Observações": "Obs."})
                 title = "Agenda da Semana (A4)"
                 subtitle = f"{IGREJA_NOME}<br/>{_fmt_date_br(monday)} - {_fmt_date_br(sunday)}<br/>{badge_top}"
                 pdf_bytes = df_to_pdf_bytes_a4(pdf_df, title=title, subtitle=subtitle)
@@ -1210,18 +1200,22 @@ def page_agenda_publica():
                             data=pdf_bytes,
                             file_name=f"agenda_tabela_a4_{monday.strftime('%Y%m%d')}.pdf",
                             mime="application/pdf",
-                            use_container_width=True
+                            use_container_width=True,
+                            key=f"dl_pdf_tabela_{monday.strftime('%Y%m%d')}_{badge_top}"
                         )
 
-            with t_cards:
-                for _, r in sub.iterrows():
-                    _event_card(r.to_dict())
+                st.divider()
 
-    render_group("Todos", tab_todos, "📌")
-    render_group("Culto", tab_culto, "🎵")
-    render_group("EBD", tab_ebd, "📚")
-    render_group("Oração", tab_oracao, "🙏")
-    render_group("Ensaio", tab_ensaio, "🎤")
+            # Cards sempre
+            for _, r in sub.iterrows():
+                _event_card(r.to_dict())
+
+    render_group("Todos", tab_todos)
+    render_group("Culto", tab_culto)
+    render_group("EBD", tab_ebd)
+    render_group("Oração", tab_oracao)
+    render_group("Ensaio", tab_ensaio)
+
 
 # =========================
 # Cadastro de Evento
