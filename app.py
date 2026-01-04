@@ -1075,22 +1075,147 @@ def page_agenda_publica():
 
     with c2:
         if png_rodizio:
+            st.download_butt# =========================
+# Agenda Pública (somente CARDS + filtro Subtipo do Culto)
+# =========================
+def page_agenda_publica():
+    st.markdown(
+        f"""
+        <div class="modern-card">
+          <h2 style="color: {COLORS['primary']}; margin-bottom: 0.5rem;">📅 Agenda Pública</h2>
+          <p style="color: {COLORS['text_light']}; margin-bottom: 1.5rem;">
+            Visualização pública dos eventos da igreja. Acesso livre sem necessidade de login.
+          </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    def _clean_badge(txt: str) -> str:
+        if not txt:
+            return ""
+        clean = str(txt).strip()
+        clean = clean.replace("Filtro.", "").replace("Filtro", "").strip()
+        clean = " ".join(clean.split())
+        return clean
+
+    col1, col2, col3 = st.columns([1.2, 1, 1.2])
+    with col1:
+        ref = st.date_input("📆 Semana de referência", value=date.today(), format="DD/MM/YYYY")
+    with col2:
+        congregacao = st.selectbox("🏛️ Congregação", ["Todas"] + CONGREGACOES)
+    with col3:
+        subtipo_filtro = st.selectbox("✨ Subtipo do Culto", ["Todos"] + (SUBTIPOS_CULTO or []), index=0)
+
+    monday, sunday = week_bounds(ref)
+
+    # Badge superior (regra nova)
+    if subtipo_filtro != "Todos":
+        badge_top = _clean_badge(subtipo_filtro)  # só o nome do filtro
+    elif congregacao != "Todas":
+        badge_top = f"Congregação. {_clean_badge(congregacao)}"
+    else:
+        badge_top = "Todas"
+
+    st.markdown(
+        f"""
+        <div class="modern-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+            <div>
+              <h3 style="margin: 0; color: {COLORS['primary']};">📋 Resumo da Semana</h3>
+              <p style="margin: 0.5rem 0 0 0; color: {COLORS['text_light']};">
+                {_fmt_date_br(monday)} - {_fmt_date_br(sunday)}
+              </p>
+            </div>
+            <span class="badge badge-primary">{badge_top}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    eventos = list_events_between(
+        monday,
+        sunday,
+        congregacao=None if congregacao == "Todas" else congregacao,
+        tipo=None
+    )
+
+    if not eventos:
+        st.info("📭 Nenhum evento cadastrado nesta semana.")
+        return
+
+    df = pd.DataFrame(eventos)
+
+    # Normalizações básicas
+    df["data"] = pd.to_datetime(df["data"]).dt.date
+    df["horario_txt"] = df["horario"].astype(str).str[:5]
+    df["tipo"] = df.get("tipo", "").fillna("").astype(str)
+    df["subtipo"] = df.get("subtipo", "").fillna("").astype(str)
+
+    # =========================
+    # Aplicar filtros
+    # =========================
+    # Subtipo do Culto: quando selecionado, mostra somente Cultos daquele subtipo
+    if subtipo_filtro != "Todos":
+        df = df[(df["tipo"] == "Culto") & (df["subtipo"].str.strip() == str(subtipo_filtro).strip())]
+
+    # Ordenação
+    if not df.empty:
+        df = df.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
+
+    if df.empty:
+        st.info("📭 Nenhum evento encontrado com esse filtro.")
+        return
+
+    # =========================
+    # Exportação (não some com filtro) + keys únicas
+    # =========================
+    pdf_rodizio, png_rodizio = agenda_todos_to_pdf_rodizio(
+        subdf=df,
+        monday=monday,
+        sunday=sunday,
+        congregacao_txt=(badge_top if subtipo_filtro != "Todos" else congregacao),
+        return_png=True
+    )
+
+    kbase = f"{monday.strftime('%Y%m%d')}_{_clean_badge(congregacao)}_{_clean_badge(subtipo_filtro)}"
+
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        if pdf_rodizio:
+            st.download_button(
+                "🧾 Baixar PDF",
+                data=pdf_rodizio,
+                file_name=f"rodizio_semanal_{kbase}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"dl_pdf_{kbase}"
+            )
+    with c2:
+        if png_rodizio:
             st.download_button(
                 "🖼️ Baixar PNG",
                 data=png_rodizio,
-                file_name=f"rodizio_semanal_{monday.strftime('%Y%m%d')}.png",
+                file_name=f"rodizio_semanal_{kbase}.png",
                 mime="image/png",
-                use_container_width=True
+                use_container_width=True,
+                key=f"dl_png_{kbase}"
             )
-
+        else:
+            st.caption("Para liberar o PNG, instale PyMuPDF.")
+            st.code("pip install pymupdf", language="bash")
     with c3:
-        st.caption("Exportação baseada nos filtros aplicados")
+        st.caption("Baixe o rodízio semanal do jeito que você quiser. PDF ou PNG.")
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
     # =========================
-    # Cards (SOMENTE CARDS)
+    # Render: SOMENTE CARDS (já filtrados)
     # =========================
     for _, r in df.iterrows():
         _event_card(r.to_dict())
+
 
 
 # =========================
