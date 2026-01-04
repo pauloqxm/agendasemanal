@@ -1003,9 +1003,13 @@ def page_agenda_publica():
     df = df.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
 
     # ✅ topo: ao filtrar, mostra o nome do filtro
-    badge_txt = congregacao
+    badge_top = congregacao
     if subtipo_filtro != "Todos":
-        badge_txt = f"Filtro. {subtipo_filtro}"
+        clean = str(subtipo_filtro).strip()
+        clean = clean.replace("Filtro.", "").replace("Filtro", "").strip()
+        clean = " ".join(clean.split())  # garante "Santa Ceia"
+        badge_top = clean
+
 
     st.markdown(
         f"""
