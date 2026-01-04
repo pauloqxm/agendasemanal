@@ -94,6 +94,7 @@ def apply_css():
         border-right: none;
     }}
 
+    /* Tabs */
     .stTabs [data-baseweb="tab-list"] {{
         gap: 8px;
         background-color: {COLORS['background']};
@@ -119,6 +120,7 @@ def apply_css():
         font-weight: 600;
     }}
 
+    /* Cards */
     .modern-card {{
         background: {COLORS['card']};
         border: 1px solid #E2E8F0;
@@ -144,6 +146,7 @@ def apply_css():
         border-left: 4px solid {COLORS['light']};
     }}
 
+    /* Destaque do dia da semana */
     .weekday-pill {{
         display: inline-flex;
         align-items: center;
@@ -158,6 +161,7 @@ def apply_css():
         text-transform: uppercase;
     }}
 
+    /* Botões */
     .stButton > button {{
         border-radius: 10px;
         font-weight: 600;
@@ -179,6 +183,7 @@ def apply_css():
         border: 2px solid {COLORS['primary']};
     }}
 
+    /* Inputs como card */
     div[data-testid="stDateInput"],
     div[data-testid="stSelectbox"],
     div[data-testid="stTimeInput"],
@@ -201,6 +206,7 @@ def apply_css():
       color: #1A202C !important;
     }}
 
+    /* Topbar */
     .topbar {{
         background: linear-gradient(135deg, {COLORS['primary']} 0%, {COLORS['secondary']} 100%);
         border-radius: 16px;
@@ -248,6 +254,7 @@ def apply_css():
         color: rgba(255, 255, 255, 0.9);
     }}
 
+    /* Badges */
     .badge {{
         display: inline-flex;
         align-items: center;
@@ -770,6 +777,7 @@ def agenda_todos_to_pdf_rodizio(
 
     return pdf_bytes, png_bytes
 
+
 # =========================
 # UI
 # =========================
@@ -847,6 +855,8 @@ def _event_card(ev: dict):
     turma = escape(ev.get("turma_ebd") or "")
 
     badges = ""
+    if ev.get("id") is not None:
+        badges += f'<span class="badge badge-muted">🆔 {escape(str(ev.get("id")))}</span>'
     if subtipo:
         badges += f'<span class="badge badge-warning">🎯 {subtipo}</span>'
     if turma:
@@ -855,7 +865,7 @@ def _event_card(ev: dict):
         badges += f'<span class="badge badge-primary">📋 {escape(ev.get("secretaria") or "")}</span>'
 
     lab_s, lab_p = _labels_dirigencia(tipo_raw)
-    label_equipes = lab_p
+    label_equipes = lab_p  # no card, é lista
 
     dirigentes = escape(join_people(ev.get("dirigente1"), ev.get("dirigente2"), ev.get("dirigente3")) or "")
     portaria = escape(join_people(ev.get("portaria1"), ev.get("portaria2"), ev.get("portaria3")) or "")
@@ -1032,17 +1042,13 @@ def page_agenda_publica():
         unsafe_allow_html=True
     )
 
-    c1, c2, c3 = st.columns([1.2, 1.2, 1.2])
-    with c1:
+    col1, col2, col3 = st.columns([1.2, 1, 0.8])
+    with col1:
         ref = st.date_input("📆 Semana de referência", value=date.today(), format="DD/MM/YYYY")
-    with c2:
+    with col2:
         congregacao = st.selectbox("🏛️ Congregação", ["Todas"] + CONGREGACOES)
-    with c3:
-        subtipo_filtro = st.selectbox(
-            "🎯 Subtipo do Culto",
-            ["Todos"] + SUBTIPOS_CULTO,
-            index=0
-        )
+    with col3:
+        modo = st.selectbox("👁️ Exibição", ["Cards", "Tabela"], index=0)
 
     monday, sunday = week_bounds(ref)
 
@@ -1078,13 +1084,6 @@ def page_agenda_publica():
     df["data"] = pd.to_datetime(df["data"]).dt.date
     df["horario_txt"] = df["horario"].astype(str).str[:5]
     df = df.sort_values(["data", "horario_txt", "congregacao"], ascending=True)
-
-    # filtro de subtipo apenas para Culto (e só filtra se escolher algo diferente de Todos)
-    if subtipo_filtro and subtipo_filtro != "Todos":
-        df = df[
-            (df["tipo"] == "Culto") &
-            (df["subtipo"].fillna("").astype(str) == str(subtipo_filtro))
-        ].copy()
 
     tab_todos, tab_culto, tab_ebd, tab_oracao, tab_ensaio = st.tabs(
         ["📌 Todos", "🎵 Cultos", "📚 EBD", "🙏 Oração", "🎤 Ensaios"]
@@ -1122,16 +1121,11 @@ def page_agenda_publica():
         with container:
             sub = df if tipo_nome == "Todos" else df[df["tipo"] == tipo_nome].copy()
 
-            # Se escolheu subtipo, e a aba não é Culto nem Todos, esvazia para ficar coerente
-            if subtipo_filtro != "Todos" and tipo_nome not in ["Todos", "Culto"]:
-                sub = sub.iloc[0:0].copy()
-
             if sub.empty:
                 st.info(f"{icon} Sem eventos deste tipo nesta semana.")
                 return
 
-            # PDF rodízio só faz sentido no "Todos" sem filtro de subtipo
-            if tipo_nome == "Todos" and (subtipo_filtro == "Todos"):
+            if tipo_nome == "Todos":
                 pdf_rodizio, png_rodizio = agenda_todos_to_pdf_rodizio(
                     subdf=sub,
                     monday=monday,
@@ -1166,14 +1160,9 @@ def page_agenda_publica():
                         st.code("pip install pymupdf", language="bash")
 
                 with c3:
-                    st.caption("PDF e PNG em formato A4, pronto para imprimir.")
+                    st.caption("Escolha um formato, PDF ou PNG, e baixe")
 
-            # Cards sempre (sem modo tabela aqui)
-            for _, r in sub.iterrows():
-                _event_card(r.to_dict())
-
-            # tabela/exports em expander (pra não poluir)
-            with st.expander("📄 Ver em tabela e exportar", expanded=False):
+            if modo == "Tabela":
                 show = make_table_view(sub)
                 st.dataframe(show, use_container_width=True, hide_index=True)
 
@@ -1181,7 +1170,6 @@ def page_agenda_publica():
                     show,
                     title=f"{tipo_nome} • {_fmt_date_br(monday)} a {_fmt_date_br(sunday)}"
                 )
-
                 colx, coly, colz = st.columns(3)
                 with colx:
                     if png:
@@ -1215,6 +1203,10 @@ def page_agenda_publica():
                             mime="application/pdf",
                             use_container_width=True
                         )
+                return
+
+            for _, r in sub.iterrows():
+                _event_card(r.to_dict())
 
     render_group("Todos", tab_todos, "📌")
     render_group("Culto", tab_culto, "🎵")
