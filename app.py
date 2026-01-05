@@ -423,7 +423,7 @@ def df_to_pdf_bytes_a4(df: pd.DataFrame, title: str, subtitle: str):
     return pdf
 
 # =========================
-# PDF e PNG "Rodízio Semanal" (EBD encaixada no dia, visual melhorado)
+# PDF e PNG "Rodízio Semanal" (layout igual ao modelo + ajustes finais)
 # =========================
 def agenda_todos_to_pdf_rodizio(
     subdf: pd.DataFrame,
@@ -484,9 +484,13 @@ def agenda_todos_to_pdf_rodizio(
             return ""
         t = tipo_txt.strip()
         low = t.lower()
-        known = ["maternal", "juniores", "jovens", "adultos", "adolescentes", "crianças"]
+        known = ["maternal", "juniores", "jovens", "adultos", "adolescentes", "crianças", "jardim", "infância"]
         for k in known:
             if k in low:
+                if k == "infância":
+                    return "Infância"
+                if k == "jardim":
+                    return "Jardim"
                 return k.capitalize()
         if "-" in t:
             part = t.split("-", 1)[1].strip()
@@ -582,7 +586,7 @@ def agenda_todos_to_pdf_rodizio(
             leading=12.5,
             textColor=colors.HexColor("#1e3a8a"),
             alignment=1,
-            spaceAfter=8
+            spaceAfter=6
         ),
         "small_center": ParagraphStyle(
             "small_center",
@@ -650,7 +654,7 @@ def agenda_todos_to_pdf_rodizio(
             w = _weekday_label(d) or ""
             return w.upper()
         except Exception:
-            dias = ["SEGUNDA", "TERÇA", "QUARTA", "QUINTA", "SEXTA", "SÁBADO", "DOMINGO"]
+            dias = ["SEGUNDA-FEIRA", "TERÇA-FEIRA", "QUARTA-FEIRA", "QUINTA-FEIRA", "SEXTA-FEIRA", "SÁBADO", "DOMINGO"]
             return dias[d.weekday()]
 
     def _sep_line(doc_width: float):
@@ -668,7 +672,6 @@ def agenda_todos_to_pdf_rodizio(
         hora = (row.get("hora_h") or "").strip()
         tipo = _tipo_resumo(row) or ""
         roles = _build_roles_inline(row, row.get("categoria") or "")
-
         congreg = (row.get("congregacao") or "").strip()
 
         hora_html = _html_escape(hora)
@@ -687,23 +690,35 @@ def agenda_todos_to_pdf_rodizio(
 
         return f"• {core}"
 
+    def _bullet_ebd_day(row: dict) -> str:
+        """
+        No dia da EBD:
+        Hora + texto fixo "EBD - Escola Bíblica" + Portaria (porteiro)
+        """
+        hora = (row.get("hora_h") or "").strip()
+
+        portaria = _people_line_dyn(
+            "Portaria", "Portaria",
+            row.get("portaria1"), row.get("portaria2"), row.get("portaria3")
+        )
+        portaria_txt = ""
+        if portaria:
+            val = portaria.split(":", 1)[-1].strip() if ":" in portaria else portaria
+            portaria_txt = f" - <b>Portaria</b>: {_html_escape(val)}"
+
+        congreg = (row.get("congregacao") or "").strip()
+        congreg_txt = f" <font color='#1e3a8a'><b>({_html_escape(congreg)})</b></font>" if congreg else ""
+
+        return f"• {_html_escape(hora)}: <b>EBD - Escola Bíblica</b>{portaria_txt}{congreg_txt}"
+
     def _build_ebd_table(df_ebd_day: pd.DataFrame, usable_w: float):
         """
-        Tabela encaixada no dia, com header 3 = título da lição (puxado de Observações).
-        Coluna 3 continua mostrando o texto da lição por classe (também Observações, se vier por linha).
+        Tabela encaixada no dia:
+        3ª coluna com header fixo "Título da lição"
+        Conteúdo da 3ª coluna puxado de Observações (por linha)
         """
         if df_ebd_day is None or df_ebd_day.empty:
             return None
-
-        # Título global da lição: primeiro Observações não vazio do dia
-        lesson_title = ""
-        for v in df_ebd_day["observacoes"].tolist() if "observacoes" in df_ebd_day.columns else []:
-            vv = (v or "").strip()
-            if vv:
-                lesson_title = vv
-                break
-        if not lesson_title:
-            lesson_title = "Lição"
 
         rows = []
         regente_global = ""
@@ -719,10 +734,7 @@ def agenda_todos_to_pdf_rodizio(
             if not professores:
                 professores = _people_join(row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3"))
 
-            # coluna 3: lição por linha, prioriza "licao", senão Observações
-            licao = (row.get("licao") or "").strip()
-            if not licao:
-                licao = (row.get("observacoes") or "").strip()
+            titulo_licao = (row.get("observacoes") or "").strip()
 
             reg = (row.get("regente") or "").strip()
             if not reg:
@@ -735,24 +747,18 @@ def agenda_todos_to_pdf_rodizio(
             rows.append([
                 Paragraph(_html_escape(classe or ""), styles["table_cell"]),
                 Paragraph(_html_escape(professores or ""), styles["table_cell"]),
-                Paragraph(_html_escape(licao or ""), styles["table_cell"]),
+                Paragraph(_html_escape(titulo_licao or ""), styles["table_cell"]),
             ])
 
-        if len(rows) < 2:
+        if len(rows) < 1:
             return None
-
-        header3 = lesson_title.strip()
-        # segura para não estourar
-        if len(header3) > 44:
-            header3 = header3[:41].rstrip() + "..."
 
         header = [
             Paragraph("Classes", styles["table_header"]),
             Paragraph("Professores", styles["table_header"]),
-            Paragraph(_html_escape(header3), styles["table_header"]),
+            Paragraph("Título da lição", styles["table_header"]),
         ]
 
-        # Regente aparecendo no topo da primeira célula da coluna 3, mantendo o jeitão do modelo
         if regente_global:
             rows[0][2] = Paragraph(
                 f"<b>Regente</b>: {_html_escape(regente_global)}<br/>{rows[0][2].text}",
@@ -814,12 +820,27 @@ def agenda_todos_to_pdf_rodizio(
     if "IGREJA_NOME" in globals() and IGREJA_NOME:
         story.append(Paragraph(IGREJA_NOME, styles["small_center"]))
 
-    # Linha separadora abaixo do cabeçalho
-    story.append(Spacer(1, 6))
-    story.append(_sep_line(usable_w))
-    story.append(Spacer(1, 6))
+    # Congregação em destaque logo depois do cabeçalho
+    if congregacao_txt:
+        cong_tbl = Table(
+            [[Paragraph(f"<b>CONGREGAÇÃO: {_html_escape(congregacao_txt.upper())}</b>", styles["small_center"])]],
+            colWidths=[usable_w]
+        )
+        cong_tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#DBEAFE")),
+            ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#1e3a8a")),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        story.append(Spacer(1, 6))
+        story.append(cong_tbl)
+        story.append(Spacer(1, 10))
 
-    # Processa dia por dia, para a EBD ficar encaixada no dia certo
+    # Linha separadora abaixo do cabeçalho
+    story.append(_sep_line(usable_w))
+    story.append(Spacer(1, 8))
+
+    # Processa dia por dia (EBD encaixada no dia certo)
     days = []
     dcur = monday
     while dcur <= sunday:
@@ -827,17 +848,18 @@ def agenda_todos_to_pdf_rodizio(
         dcur = dcur + timedelta(days=1)
 
     df_all = df_in_period.copy()
-    df_all["obs_txt"] = df_all["observacoes"].fillna("").astype(str)
+    df_all["observacoes"] = df_all["observacoes"].fillna("").astype(str)
 
-    for idx, dday in enumerate(days):
+    for dday in days:
         df_day = df_all[df_all["data"] == dday].copy()
         if df_day.empty:
             continue
 
+        # Cabeçalho do dia (igual ao modelo)
         day_name = _weekday_upper(dday)
         story.append(Paragraph(f"{day_name}. {_fmt_date_br(dday)}", styles["day_head"]))
 
-        # Eventos não EBD primeiro, no estilo do modelo (bullets)
+        # Eventos do dia (menos EBD)
         df_main = df_day[df_day["categoria"] != "EBD"].copy().sort_values(["horario_txt", "categoria"])
         for _, r in df_main.iterrows():
             row = r.to_dict()
@@ -846,20 +868,13 @@ def agenda_todos_to_pdf_rodizio(
             obs = (row.get("observacoes") or "").strip()
             if obs:
                 obs_pdf = _html_escape(obs).replace("\n", "<br/>")
-                story.append(Paragraph(f"{obs_pdf}", styles["obs_line"]))
+                story.append(Paragraph(obs_pdf, styles["obs_line"]))
 
-        # EBD encaixada no dia
+        # EBD do dia (linha padronizada + tabela)
         df_ebd_day = df_day[df_day["categoria"] == "EBD"].copy().sort_values(["horario_txt"])
         if not df_ebd_day.empty:
-            # Bullet de chamada da EBD (igual ao modelo, e tabela logo em seguida)
             base_row = df_ebd_day.iloc[0].to_dict()
-            story.append(Paragraph(_bullet_for_event(base_row), styles["bullet_line"]))
-
-            # Observações da linha base também aparecem como info do dia (se existirem)
-            base_obs = (base_row.get("observacoes") or "").strip()
-            if base_obs:
-                base_obs_pdf = _html_escape(base_obs).replace("\n", "<br/>")
-                story.append(Paragraph(f"{base_obs_pdf}", styles["obs_line"]))
+            story.append(Paragraph(_bullet_ebd_day(base_row), styles["bullet_line"]))
 
             t = _build_ebd_table(df_ebd_day, usable_w)
             if t:
@@ -890,9 +905,6 @@ def agenda_todos_to_pdf_rodizio(
         png_bytes = None
 
     return pdf_bytes, png_bytes
-
-
-
 
 # =========================
 # UI
