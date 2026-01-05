@@ -690,26 +690,30 @@ def agenda_todos_to_pdf_rodizio(
 
         return f"• {core}"
 
+#==|=========
     def _bullet_ebd_day(row: dict) -> str:
         """
-        No dia da EBD:
-        Hora + texto fixo "EBD - Escola Bíblica" + Portaria (porteiro)
+        Linha da EBD:
+        Hora + 'EBD - Escola Bíblica' + (Congregação) + Portaria (texto do formulário)
         """
         hora = (row.get("hora_h") or "").strip()
-
-        portaria = _people_line_dyn(
-            "Portaria", "Portaria",
-            row.get("portaria1"), row.get("portaria2"), row.get("portaria3")
-        )
-        portaria_txt = ""
-        if portaria:
-            val = portaria.split(":", 1)[-1].strip() if ":" in portaria else portaria
-            portaria_txt = f" - <b>Portaria</b>: {_html_escape(val)}"
-
+    
+        # Congregação do evento
         congreg = (row.get("congregacao") or "").strip()
-        congreg_txt = f" <font color='#1e3a8a'><b>({_html_escape(congreg)})</b></font>" if congreg else ""
+        congreg_txt = (
+            f" <font color='#1e3a8a'><b>({_html_escape(congreg)})</b></font>"
+            if congreg else ""
+        )
+    
+        # Portaria EXCLUSIVAMENTE do formulário
+        portaria_form = (row.get("portaria") or "").strip()
+        portaria_txt = (
+            f" - <b>Portaria</b>: {_html_escape(portaria_form)}"
+            if portaria_form else ""
+        )
+    
+        return f"• {_html_escape(hora)}: <b>EBD - Escola Bíblica</b>{congreg_txt}{portaria_txt}"
 
-        return f"• {_html_escape(hora)}: <b>EBD - Escola Bíblica</b>{portaria_txt}{congreg_txt}"
 
     def _build_ebd_table(df_ebd_day: pd.DataFrame, usable_w: float):
         """
