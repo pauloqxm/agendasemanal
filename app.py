@@ -423,7 +423,7 @@ def df_to_pdf_bytes_a4(df: pd.DataFrame, title: str, subtitle: str):
     return pdf
 
 # =========================
-# PDF "Rodízio Semanal"
+# PDF e PNG "Rodízio Semanal" (layout igual ao modelo da imagem)
 # =========================
 def agenda_todos_to_pdf_rodizio(
     subdf: pd.DataFrame,
@@ -442,62 +442,171 @@ def agenda_todos_to_pdf_rodizio(
         except Exception:
             return None
 
+    def _fmt_hora_h(h):
+        """
+        '19:00' -> '19h'
+        '19:30' -> '19h30'
+        """
+        if h is None:
+            return ""
+        s = str(h).strip()
+        if not s:
+            return ""
+        s = s[:5]
+        if ":" not in s:
+            return s
+        hh, mm = s.split(":", 1)
+        hh = (hh or "").strip()
+        mm = (mm or "").strip()
+        if not hh:
+            return ""
+        if mm in ("", "00"):
+            return f"{hh}h"
+        return f"{hh}h{mm}"
+
     def _cat_from_tipo(row: dict) -> str:
         t = (row.get("tipo") or "").strip()
         if t:
-            return t
+            # tenta classificar pelo texto
+            for cand in ["Culto", "EBD", "Ensaio", "Oração", "Escola Bíblica"]:
+                if cand.lower() in t.lower():
+                    return "EBD" if "escola bíblica" in t.lower() else cand
         txt = (format_tipo(row) or "").strip()
-        for cand in ["Culto", "EBD", "Ensaio", "Oração"]:
-            if cand in txt:
-                return cand
+        for cand in ["Culto", "EBD", "Ensaio", "Oração", "Escola Bíblica"]:
+            if cand.lower() in txt.lower():
+                return "EBD" if "escola bíblica" in txt.lower() else cand
         return "Outros"
 
-    def _fmt_dt_line(row: dict) -> str:
-        hora = (str(row.get("horario"))[:5] if row.get("horario") else "").strip()
-        tipo_txt = (format_tipo(row) or "").strip()
-        congreg = (row.get("congregacao") or "").strip()
+    def _tipo_resumo(row: dict) -> str:
+        # Texto principal do item, tipo "Círculo de Oração", "Culto de Ensino", etc
+        txt = (format_tipo(row) or row.get("tipo") or "").strip()
+        return txt
 
-        hora_e = _html_escape(hora)
-        tipo_e = _html_escape(tipo_txt)
-        congreg_e = _html_escape(congreg)
+    def _maybe_class_from_tipo(tipo_txt: str) -> str:
+        """
+        Tenta extrair classe da EBD do texto.
+        Ex: "EBD - Maternal" -> "Maternal"
+        """
+        if not tipo_txt:
+            return ""
+        t = tipo_txt.strip()
+        low = t.lower()
+        # casos comuns
+        known = ["maternal", "juniores", "jovens", "adultos", "adolescentes", "crianças"]
+        for k in known:
+            if k in low:
+                # devolve com a primeira letra maiúscula
+                return k.capitalize()
+        # padrão com hífen
+        if "-" in t:
+            part = t.split("-", 1)[1].strip()
+            if part:
+                return part
+        return ""
 
-        line = f"• {hora_e} {tipo_e}"
-        if congreg_e:
-            line += (
-                " "
-                "<font backColor='#DBEAFE' color='#0f172a'>"
-                f" ({congreg_e}) "
-                "</font>"
-            )
-        return line
+    def _people_join(*vals):
+        ppl = []
+        for v in vals:
+            v = (v or "").strip()
+            if v:
+                ppl.append(v)
+        return ", ".join(ppl)
 
+    def _labels_dirigencia_for_row(row: dict, fallback_cat: str):
+        # mantém sua lógica existente, só com fallback seguro
+        try:
+            lab_s, lab_p = _labels_dirigencia(row.get("tipo") or fallback_cat)
+            return lab_s, lab_p
+        except Exception:
+            return "Dirigente", "Dirigentes"
+
+    def _build_roles_inline(row: dict, fallback_cat: str) -> str:
+        """
+        Monta 'Dirigentes: Fulano e Sicrana - Regente: X - Portaria: Y - Recepção: Z'
+        Somente o que existir.
+        """
+        parts = []
+
+        lab_s, lab_p = _labels_dirigencia_for_row(row, fallback_cat)
+
+        dirigentes = _people_line_dyn(
+            lab_s, lab_p,
+            row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3")
+        )
+        portaria = _people_line_dyn(
+            "Portaria", "Portaria",
+            row.get("portaria1"), row.get("portaria2"), row.get("portaria3")
+        )
+        recepcao = _people_line_dyn(
+            "Recepção", "Recepção",
+            row.get("recepcao1"), row.get("recepcao2"), row.get("recepcao3")
+        )
+
+        # Regente, se existir em algum lugar
+        regente = (row.get("regente") or "").strip()
+        if not regente:
+            # muita gente usa secretaria como "regente" em ensaios, então tenta
+            # mas sem forçar se for claramente outra coisa
+            sec = (row.get("secretaria") or "").strip()
+            if sec and "cong." not in sec.lower():
+                regente = sec
+
+        if dirigentes:
+            parts.append(f"<b>{_html_escape(lab_p)}</b>: {_html_escape(dirigentes.split(':',1)[-1].strip()) if ':' in dirigentes else _html_escape(dirigentes)}")
+        if regente:
+            parts.append(f"<b>Regente</b>: {_html_escape(regente)}")
+        if portaria:
+            parts.append(f"<b>Portaria</b>: {_html_escape(portaria.split(':',1)[-1].strip()) if ':' in portaria else _html_escape(portaria)}")
+        if recepcao:
+            parts.append(f"<b>Recepção</b>: {_html_escape(recepcao.split(':',1)[-1].strip()) if ':' in recepcao else _html_escape(recepcao)}")
+
+        return " - ".join([p for p in parts if p])
+
+    # -------------------------
+    # Pré-processamento
+    # -------------------------
     dfp = subdf.copy()
     dfp["data"] = pd.to_datetime(dfp["data"]).dt.date
     dfp["horario_txt"] = dfp["horario"].astype(str).str[:5]
+    dfp["hora_h"] = dfp["horario_txt"].apply(_fmt_hora_h)
     dfp["categoria"] = dfp.apply(lambda r: _cat_from_tipo(r.to_dict()), axis=1)
-    dfp = dfp.sort_values(["categoria", "data", "horario_txt", "congregacao"], ascending=True)
+    dfp = dfp.sort_values(["data", "horario_txt", "categoria", "congregacao"], ascending=True)
 
+    # -------------------------
+    # Estilos (igual ao visual do modelo)
+    # -------------------------
     base = getSampleStyleSheet()
     styles = {
         "h_title": ParagraphStyle(
             "h_title",
             parent=base["Title"],
             fontName="Helvetica-Bold",
-            fontSize=16,
-            leading=18,
-            textColor=colors.HexColor(COLORS["primary"]),
-            spaceAfter=6,
-            alignment=1
+            fontSize=13.5,
+            leading=16,
+            textColor=colors.HexColor("#1e3a8a"),
+            alignment=1,
+            spaceAfter=3
         ),
         "h_sub": ParagraphStyle(
             "h_sub",
             parent=base["Normal"],
             fontName="Helvetica-Bold",
-            fontSize=10,
-            leading=12,
-            textColor=colors.HexColor(COLORS["secondary"]),
+            fontSize=10.5,
+            leading=12.5,
+            textColor=colors.HexColor("#1e3a8a"),
             alignment=1,
-            spaceAfter=8
+            spaceAfter=10
+        ),
+        "bullet_line": ParagraphStyle(
+            "bullet_line",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=10,
+            leading=13,
+            textColor=colors.HexColor("#0f172a"),
+            leftIndent=12,
+            firstLineIndent=-10,
+            spaceAfter=5
         ),
         "small_center": ParagraphStyle(
             "small_center",
@@ -509,176 +618,152 @@ def agenda_todos_to_pdf_rodizio(
             alignment=1,
             spaceAfter=6
         ),
-        "cat_title": ParagraphStyle(
-            "cat_title",
-            parent=base["Normal"],
-            fontName="Helvetica-Bold",
-            fontSize=12.5,
-            leading=14,
-            textColor=colors.HexColor(COLORS["primary"]),
-            spaceBefore=6,
-            spaceAfter=6
-        ),
-        "day_title": ParagraphStyle(
-            "day_title",
-            parent=base["Normal"],
-            fontName="Helvetica-Bold",
-            fontSize=10.5,
-            leading=13,
-            textColor=colors.HexColor(COLORS["secondary"]),
-            spaceBefore=6,
-            spaceAfter=4
-        ),
-        "ev_line": ParagraphStyle(
-            "ev_line",
+        "table_cell": ParagraphStyle(
+            "table_cell",
             parent=base["Normal"],
             fontName="Helvetica",
-            fontSize=9.5,
-            leading=12,
+            fontSize=9.2,
+            leading=11.2,
             textColor=colors.HexColor("#0f172a"),
-            leftIndent=8,
-            spaceAfter=2
+            alignment=0
         ),
-        "ev_meta": ParagraphStyle(
-            "ev_meta",
+        "table_cell_center": ParagraphStyle(
+            "table_cell_center",
             parent=base["Normal"],
             fontName="Helvetica",
-            fontSize=9,
-            leading=11,
-            textColor=colors.HexColor("#334155"),
-            leftIndent=14,
-            spaceAfter=2
+            fontSize=9.2,
+            leading=11.2,
+            textColor=colors.HexColor("#0f172a"),
+            alignment=1
         ),
-        "badge_center": ParagraphStyle(
-            "badge_center",
+        "table_header": ParagraphStyle(
+            "table_header",
             parent=base["Normal"],
             fontName="Helvetica-Bold",
-            fontSize=9,
-            leading=11,
-            textColor=colors.HexColor("#0f172a"),
+            fontSize=9.2,
+            leading=11.2,
+            textColor=colors.white,
             alignment=1
         ),
     }
 
-    order = ["Culto", "Ensaio", "Oração", "EBD"]
-    found = [c for c in order if c in set(dfp["categoria"].tolist())]
-    extras = sorted([c for c in dfp["categoria"].unique().tolist() if c not in found])
-    categories = found + extras
+    def _weekday_upper(d: date) -> str:
+        # usa seu helper se existir, senão faz simples
+        try:
+            w = _weekday_label(d)
+            return (w or "").upper()
+        except Exception:
+            dias = ["SEGUNDA", "TERÇA", "QUARTA", "QUINTA", "SEXTA", "SÁBADO", "DOMINGO"]
+            return dias[d.weekday()]
 
-    cat_colors = {
-        "Culto": {"bg": "#EAF2FF", "line": COLORS["light"]},
-        "EBD": {"bg": "#ECFDF5", "line": COLORS["success"]},
-        "Ensaio": {"bg": "#FFFBEB", "line": COLORS["warning"]},
-        "Oração": {"bg": "#EEF2FF", "line": COLORS["accent"]},
-        "Outros": {"bg": "#F1F5F9", "line": COLORS["secondary"]},
-    }
+    def _line_for_row(row: dict) -> str:
+        dia = _weekday_upper(row["data"])
+        hora = (row.get("hora_h") or "").strip()
+        tipo = _tipo_resumo(row) or ""
+        roles = _build_roles_inline(row, row.get("categoria") or "")
+        # congregação, quando existir, vai em negrito discreto no final
+        congreg = (row.get("congregacao") or "").strip()
 
-    cat_emojis = {
-        "Culto": "⛪",
-        "EBD": "📖",
-        "Ensaio": "🎶",
-        "Oração": "🙏",
-        "Outros": "📌",
-    }
+        dia_html = f"<u><b>{_html_escape(dia)}</b></u>"
+        hora_html = f"{_html_escape(hora)}" if hora else ""
+        tipo_html = _html_escape(tipo)
 
-    def _congregacao_badge(text: str, doc_width: float):
-        txt = (text or "").strip()
-        if not txt:
+        # mesma pegada da imagem: "SEGUNDA, 18h: Texto - Dirigentes: ..."
+        core = f"{dia_html}"
+        if hora_html:
+            core += f", {hora_html}: "
+        else:
+            core += ", "
+        core += f"{tipo_html}"
+
+        if roles:
+            core += f" - {roles}"
+
+        if congreg:
+            core += f" <font color='#1e3a8a'><b>({ _html_escape(congreg) })</b></font>"
+
+        return f"• {core}"
+
+    def _build_ebd_table(df_ebd: pd.DataFrame, usable_w: float):
+        """
+        Tabela como no modelo: Classes | Professores | Lição (com Regente na primeira linha).
+        Só monta se tiver pelo menos 2 linhas de classes detectáveis.
+        """
+        rows = []
+        regente_global = ""
+
+        for _, r in df_ebd.iterrows():
+            row = r.to_dict()
+            tipo_txt = _tipo_resumo(row)
+            classe = (row.get("classe") or "").strip()
+            if not classe:
+                classe = _maybe_class_from_tipo(tipo_txt)
+
+            professores = _people_join(row.get("professor1"), row.get("professor2"), row.get("professor3"))
+            if not professores:
+                # reaproveita dirigentes como professores, porque normalmente já está preenchido
+                professores = _people_join(row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3"))
+
+            licao = (row.get("licao") or "").strip()
+            if not licao:
+                licao = (row.get("observacoes") or "").strip()
+
+            reg = (row.get("regente") or "").strip()
+            if not reg:
+                sec = (row.get("secretaria") or "").strip()
+                if sec and "cong." not in sec.lower():
+                    reg = sec
+            if reg and not regente_global:
+                regente_global = reg
+
+            if classe or professores or licao:
+                rows.append([
+                    Paragraph(_html_escape(classe or ""), styles["table_cell"]),
+                    Paragraph(_html_escape(professores or ""), styles["table_cell"]),
+                    Paragraph(_html_escape(licao or ""), styles["table_cell"]),
+                ])
+
+        if len(rows) < 2:
             return None
-        p = Paragraph(f"Congregação. {_html_escape(txt)}", styles["badge_center"])
-        t = Table([[p]], colWidths=[doc_width])
+
+        header = [
+            Paragraph("Classes", styles["table_header"]),
+            Paragraph("Professores", styles["table_header"]),
+            Paragraph("Lição 01", styles["table_header"]),
+        ]
+
+        # primeira linha especial no bloco "Lição 01" com "Regente: X"
+        if regente_global:
+            # coloca no topo da coluna 3 (como no modelo)
+            rows[0][2] = Paragraph(
+                f"<b>Regente</b>: {_html_escape(regente_global)}<br/>{rows[0][2].text}",
+                styles["table_cell"]
+            )
+
+        col1 = usable_w * 0.18
+        col2 = usable_w * 0.37
+        col3 = usable_w * 0.45
+
+        t = Table([header] + rows, colWidths=[col1, col2, col3])
         t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#DBEAFE")),
-            ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#93C5FD")),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.black),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+
+            ("GRID", (0, 0), (-1, -1), 0.8, colors.HexColor("#0f172a")),
+            ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ]))
         return t
 
-    def _cat_header_flowables(cat_name: str, doc_width: float):
-        meta = cat_colors.get(cat_name, cat_colors["Outros"])
-        bg = colors.HexColor(meta["bg"])
-        ln = colors.HexColor(meta["line"])
-
-        emoji = cat_emojis.get(cat_name, "📌")
-        title = f"{emoji} {cat_name.upper()}"
-
-        title_tbl = Table([[Paragraph(title, styles["cat_title"])]], colWidths=[doc_width])
-        title_tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), bg),
-            ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#CBD5E1")),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ]))
-
-        line_tbl = Table([[""]], colWidths=[doc_width], rowHeights=[2])
-        line_tbl.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), ln),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ]))
-
-        return [Spacer(1, 6), title_tbl, line_tbl, Spacer(1, 6)]
-
-    def _build_category_flowables(cat: str, doc_width: float):
-        flows = []
-        df_cat = dfp[dfp["categoria"] == cat].copy()
-        if df_cat.empty:
-            return flows
-
-        flows.extend(_cat_header_flowables(cat, doc_width))
-
-        for d, g in df_cat.groupby("data", sort=True):
-            weekday = _weekday_label(d)
-            header = f"▥ {weekday}  {_fmt_date_br(d)}"
-            flows.append(Paragraph(header, styles["day_title"]))
-
-            for _, r in g.iterrows():
-                row = r.to_dict()
-                flows.append(Paragraph(_fmt_dt_line(row), styles["ev_line"]))
-
-                lab_s, lab_p = _labels_dirigencia(row.get("tipo") or cat)
-
-                dirigentes = _people_line_dyn(
-                    lab_s, lab_p,
-                    row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3")
-                )
-                portaria = _people_line_dyn(
-                    "Portaria", "Portaria",
-                    row.get("portaria1"), row.get("portaria2"), row.get("portaria3")
-                )
-                recepcao = _people_line_dyn(
-                    "Recepção", "Recepção",
-                    row.get("recepcao1"), row.get("recepcao2"), row.get("recepcao3")
-                )
-
-                if dirigentes:
-                    flows.append(Paragraph(_html_escape(dirigentes), styles["ev_meta"]))
-                if portaria:
-                    flows.append(Paragraph(_html_escape(portaria), styles["ev_meta"]))
-                if recepcao:
-                    flows.append(Paragraph(_html_escape(recepcao), styles["ev_meta"]))
-
-                sec = (row.get("secretaria") or "").strip()
-                if sec:
-                    flows.append(Paragraph(f"Secretaria: {_html_escape(sec)}", styles["ev_meta"]))
-
-                obs = (row.get("observacoes") or "").strip()
-                if obs:
-                    obs_pdf = _html_escape(obs).replace("\n", "<br/>")
-                    flows.append(Paragraph(f"<b>Observações</b>: {obs_pdf}", styles["ev_meta"]))
-
-                flows.append(Spacer(1, 3))
-
-        flows.append(Spacer(1, 8))
-        return flows
-
+    # -------------------------
+    # Montagem do PDF
+    # -------------------------
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
@@ -690,14 +775,18 @@ def agenda_todos_to_pdf_rodizio(
         title="Rodízio Semanal"
     )
 
+    page_w = A4[0]
+    usable_w = page_w - (doc.leftMargin + doc.rightMargin)
+
     story = []
 
+    # Logo pequeno no topo (opcional)
     logo_bytes = _try_fetch_logo_bytes(LOGO_URL)
     if logo_bytes:
         try:
             img = RLImage(io.BytesIO(logo_bytes))
-            img.drawHeight = 2.2 * cm
-            img.drawWidth = 2.2 * cm
+            img.drawHeight = 1.8 * cm
+            img.drawWidth = 1.8 * cm
             img.hAlign = "CENTER"
             story.append(img)
             story.append(Spacer(1, 6))
@@ -706,56 +795,45 @@ def agenda_todos_to_pdf_rodizio(
 
     story.append(Paragraph("RODÍZIO SEMANAL", styles["h_title"]))
     story.append(Paragraph(f"PERÍODO DE {_fmt_date_br(monday)} A {_fmt_date_br(sunday)}", styles["h_sub"]))
-    story.append(Paragraph(IGREJA_NOME, styles["small_center"]))
-
-    page_w = A4[0]
-    usable_w = page_w - (doc.leftMargin + doc.rightMargin)
-    badge = _congregacao_badge(congregacao_txt, usable_w)
-    if badge:
+    if "IGREJA_NOME" in globals() and IGREJA_NOME:
+        story.append(Paragraph(IGREJA_NOME, styles["small_center"]))
         story.append(Spacer(1, 4))
-        story.append(badge)
 
-    story.append(Spacer(1, 10))
-
-    gap = 12
-    col_w = (usable_w - gap) / 2.0
-
-    left = []
-    right = []
-    sum_l = 0
-    sum_r = 0
-
-    for cat in categories:
-        flows = _build_category_flowables(cat, col_w)
-        if not flows:
-            continue
-
-        weight = len(flows)
-        if sum_l <= sum_r:
-            left.extend(flows)
-            sum_l += weight
-        else:
-            right.extend(flows)
-            sum_r += weight
-
-    if not left and not right:
+    # Lista por dia, no estilo do modelo
+    df_in_period = dfp[(dfp["data"] >= monday) & (dfp["data"] <= sunday)].copy()
+    if df_in_period.empty:
         return (None, None) if return_png else None
 
-    two_cols = Table([[left, right]], colWidths=[col_w, col_w])
-    two_cols.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    # Se tiver EBD em múltiplas classes, a gente segura e joga a tabela no meio (como na imagem)
+    df_ebd = df_in_period[df_in_period["categoria"] == "EBD"].copy()
 
-        ("RIGHTPADDING", (0, 0), (0, 0), gap / 2),
-        ("LEFTPADDING", (1, 0), (1, 0), gap / 2),
+    # Itens não-EBD em bullets
+    df_main = df_in_period[df_in_period["categoria"] != "EBD"].copy()
 
-        ("LINEBEFORE", (1, 0), (1, 0), 0.8, colors.HexColor("#CBD5E1")),
-    ]))
+    # bullets agrupados por dia
+    for d, g in df_main.groupby("data", sort=True):
+        for _, r in g.iterrows():
+            story.append(Paragraph(_line_for_row(r.to_dict() | {"data": d}), styles["bullet_line"]))
 
-    story.append(two_cols)
+        # ponto ideal para inserir a tabela (depois de QUARTA, se existir)
+        if df_ebd is not None and not df_ebd.empty:
+            # tenta encaixar após o dia da EBD, ou logo após a QUARTA
+            has_ebd_today = (df_ebd["data"] == d).any()
+            if has_ebd_today or _weekday_upper(d) == "QUARTA":
+                t = _build_ebd_table(df_ebd[df_ebd["data"] == d] if has_ebd_today else df_ebd, usable_w)
+                if t:
+                    story.append(Spacer(1, 8))
+                    story.append(t)
+                    story.append(Spacer(1, 10))
+                    # não repete a tabela depois
+                    df_ebd = df_ebd.iloc[0:0]
+
+    # Se sobrou EBD e não encaixou, joga no final
+    if df_ebd is not None and not df_ebd.empty:
+        t = _build_ebd_table(df_ebd, usable_w)
+        if t:
+            story.append(Spacer(1, 8))
+            story.append(t)
 
     doc.build(story)
     pdf_bytes = buf.getvalue()
@@ -769,13 +847,14 @@ def agenda_todos_to_pdf_rodizio(
         import fitz  # PyMuPDF
         docp = fitz.open(stream=pdf_bytes, filetype="pdf")
         page = docp.load_page(0)
-        pix = page.get_pixmap(dpi=200)
+        pix = page.get_pixmap(dpi=220)
         png_bytes = pix.tobytes("png")
         docp.close()
     except Exception:
         png_bytes = None
 
     return pdf_bytes, png_bytes
+
 
 
 # =========================
