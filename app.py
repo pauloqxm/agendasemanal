@@ -690,30 +690,38 @@ def agenda_todos_to_pdf_rodizio(
 
         return f"• {core}"
 
-#==|=========
     def _bullet_ebd_day(row: dict) -> str:
         """
         Linha da EBD:
-        Hora + 'EBD - Escola Bíblica' + (Congregação) + Portaria (texto do formulário)
+        Hora + 'EBD - Escola Bíblica' + (Congregação) + Portaria (portaria1 do formulário)
         """
         hora = (row.get("hora_h") or "").strip()
-    
-        # Congregação do evento
+
         congreg = (row.get("congregacao") or "").strip()
         congreg_txt = (
             f" <font color='#1e3a8a'><b>({_html_escape(congreg)})</b></font>"
             if congreg else ""
         )
-    
-        # Portaria EXCLUSIVAMENTE do formulário
-        portaria_form = (row.get("portaria") or "").strip()
-        portaria_txt = (
-            f" - <b>Portaria</b>: {_html_escape(portaria_form)}"
-            if portaria_form else ""
-        )
-    
-        return f"• {_html_escape(hora)}: <b>EBD - Escola Bíblica</b>{congreg_txt}{portaria_txt}"
 
+        def _clean(v: str) -> str:
+            if not v:
+                return ""
+            vv = str(v).strip()
+            if vv.lower() in ("nan", "none"):
+                return ""
+            return vv
+
+        p1 = _clean(row.get("portaria1", ""))
+        p2 = _clean(row.get("portaria2", ""))
+        p3 = _clean(row.get("portaria3", ""))
+        portaria_val = ", ".join([v for v in [p1, p2, p3] if v])
+
+        portaria_txt = (
+            f" - <b>Portaria</b>: {_html_escape(portaria_val)}"
+            if portaria_val else ""
+        )
+
+        return f"• {_html_escape(hora)}: <b>EBD - Escola Bíblica</b>{congreg_txt}{portaria_txt}"
 
     def _build_ebd_table(df_ebd_day: pd.DataFrame, usable_w: float):
         """
@@ -852,7 +860,16 @@ def agenda_todos_to_pdf_rodizio(
         dcur = dcur + timedelta(days=1)
 
     df_all = df_in_period.copy()
-    df_all["observacoes"] = df_all["observacoes"].fillna("").astype(str)
+
+    # Normaliza colunas de texto para não sumir valor por NaN
+    if "observacoes" in df_all.columns:
+        df_all["observacoes"] = df_all["observacoes"].fillna("").astype(str).replace({"nan": "", "None": ""})
+    else:
+        df_all["observacoes"] = ""
+
+    for col in ["portaria1", "portaria2", "portaria3"]:
+        if col in df_all.columns:
+            df_all[col] = df_all[col].fillna("").astype(str).replace({"nan": "", "None": ""})
 
     for dday in days:
         df_day = df_all[df_all["data"] == dday].copy()
@@ -909,6 +926,7 @@ def agenda_todos_to_pdf_rodizio(
         png_bytes = None
 
     return pdf_bytes, png_bytes
+
 
 # =========================
 # UI
