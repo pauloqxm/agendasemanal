@@ -515,7 +515,7 @@ def agenda_todos_to_pdf_rodizio(
     def _build_roles_inline(row: dict, fallback_cat: str) -> str:
         parts = []
         lab_s, lab_p = _labels_dirigencia_for_row(row, fallback_cat)
-
+    
         dirigentes = _people_line_dyn(
             lab_s, lab_p,
             row.get("dirigente1"), row.get("dirigente2"), row.get("dirigente3")
@@ -528,26 +528,27 @@ def agenda_todos_to_pdf_rodizio(
             "Recepção", "Recepção",
             row.get("recepcao1"), row.get("recepcao2"), row.get("recepcao3")
         )
-
-        regente = (row.get("regente") or "").strip()
-        if not regente:
-            sec = (row.get("secretaria") or "").strip()
-            if sec and "cong." not in sec.lower():
-                regente = sec
-
+    
+        # ✅ aqui é o certo: secretaria vem de "secretaria" e o rótulo é "Secretaria"
+        secretaria = (row.get("secretaria") or "").strip()
+    
         if dirigentes:
             val = dirigentes.split(":", 1)[-1].strip() if ":" in dirigentes else dirigentes
             parts.append(f"<b>{_html_escape(lab_p)}</b>: {_html_escape(val)}")
-        if regente:
-            parts.append(f"<b>Regente</b>: {_html_escape(regente)}")
+    
+        if secretaria:
+            parts.append(f"<b>Secretaria</b>: {_html_escape(secretaria)}")
+    
         if portaria:
             val = portaria.split(":", 1)[-1].strip() if ":" in portaria else portaria
             parts.append(f"<b>Portaria</b>: {_html_escape(val)}")
+    
         if recepcao:
             val = recepcao.split(":", 1)[-1].strip() if ":" in recepcao else recepcao
             parts.append(f"<b>Recepção</b>: {_html_escape(val)}")
-
+    
         return " - ".join([p for p in parts if p])
+
 
     # -------------------------
     # Pré-processamento
